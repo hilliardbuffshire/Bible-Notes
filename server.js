@@ -207,6 +207,84 @@ app.delete("/api/notes/:noteId/comments/:commentId", (req, res) => {
   res.json({ success: true });
 });
 
+// Excel 내보내기
+app.get("/api/export/excel", async (req, res) => {
+  try {
+    const ExcelJS = require("exceljs");
+    const { notes } = loadData();
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "말씀 노트 플랫폼"; wb.created = new Date();
+    const fill = a => ({ type:"pattern", pattern:"solid", fgColor:{argb:a} });
+    const fn = (sz, bold, color) => ({ name:"Malgun Gothic", size:sz, bold:!!bold, color:{argb: color||"FF3A1E08"} });
+    const bd = (s="thin",c="FFE2CDB8") => ({ style:s, color:{argb:c} });
+    const ab = (s,c) => ({ top:bd(s,c), left:bd(s,c), bottom:bd(s,c), right:bd(s,c) });
+
+    // ── Sheet1: 노트 목록 ──
+    const ws1 = wb.addWorksheet("노트 목록");
+    ws1.columns = [
+      {key:"no",width:6},{key:"title",width:30},{key:"date",width:13},{key:"church",width:18},
+      {key:"scr",width:26},{key:"summary",width:42},{key:"tags",width:22},{key:"youtube",width:32},{key:"content",width:55}
+    ];
+    ws1.mergeCells("A1:I1");
+    Object.assign(ws1.getCell("A1"), {
+      value:"📖 말씀 노트 목록", font:fn(16,true,"FF7B4B2A"), fill:fill("FFFDF6EE"),
+      alignment:{vertical:"middle",horizontal:"center"}
+    });
+    ws1.getRow(1).height = 38;
+    const hdr1 = ws1.addRow(["번호","제목","날짜","교회","본문 구절","핵심 요약","태그","유튜브","노트 내용"]);
+    hdr1.eachCell(c => { c.fill=fill("FF7B4B2A"); c.font=fn(11,true,"FFFFFFFF"); c.alignment={vertical:"middle",horizontal:"center",wrapText:true}; c.border=ab("thin","FF5C3317"); });
+    ws1.getRow(2).height = 30;
+    ws1.views = [{ state:"frozen", ySplit:2 }];
+    notes.forEach((note, i) => {
+      const scr = (note.mainScriptures || (note.mainScripture ? [note.mainScripture] : [])).join(" · ");
+      const dr = ws1.addRow([i+1, note.title||"", note.date||"", note.church||"", scr,
+        note.summary||"", (note.tags||[]).join(", "), note.youtubeUrl||"", note.content||""]);
+      dr.eachCell(c => { c.fill=fill(i%2===0?"FFFDF6EE":"FFFFFFFF"); c.font=fn(10); c.alignment={vertical:"top",wrapText:true}; });
+      dr.height = 65;
+    });
+
+    // ── Sheet2: 인용 성경구절 ──
+    const ws2 = wb.addWorksheet("인용 성경구절");
+    ws2.columns = [
+      {key:"noteTitle",width:26},{key:"ref",width:22},{key:"book",width:16},
+      {key:"ch",width:8},{key:"vs",width:8},{key:"en",width:48},{key:"ko",width:48}
+    ];
+    ws2.mergeCells("A1:G1");
+    Object.assign(ws2.getCell("A1"), {
+      value:"📜 인용 성경구절 목록", font:fn(15,true,"FF7B4B2A"), fill:fill("FFFDF6EE"),
+      alignment:{vertical:"middle",horizontal:"center"}
+    });
+    ws2.getRow(1).height = 36;
+    const hdr2 = ws2.addRow(["노트 제목","구절 참조","성경책","장","절","영어 본문","한국어 본문"]);
+    hdr2.eachCell(c => { c.fill=fill("FFC8780A"); c.font=fn(11,true,"FFFFFFFF"); c.alignment={vertical:"middle",horizontal:"center",wrapText:true}; c.border=ab("medium","FFA05008"); });
+    ws2.getRow(2).height = 30;
+    ws2.autoFilter = { from:{row:2,column:1}, to:{row:2,column:7} };
+    ws2.views = [{ state:"frozen", ySplit:2 }];
+    let vr = 2;
+    notes.forEach(note => {
+      (note.verses||[]).forEach(v => {
+        const ref = v.ref || v.enReference || v.korReference || "";
+        const koTxt = v.koText || v.korText || "";
+        const m = ref.match(/^(.+?)\s+(\d+):(\d+)/);
+        const [book,ch,vs] = m ? [m[1],parseInt(m[2]),parseInt(m[3])] : ["","",""];
+        vr++;
+        const dr2 = ws2.addRow([note.title||"", ref, book, ch||"", vs||"", v.text||"", koTxt]);
+        dr2.eachCell({includeEmpty:true}, c => {
+          c.fill=fill(vr%2===0?"FFFFFBEB":"FFFFFFFF"); c.font=fn(10);
+          c.alignment={vertical:"top",wrapText:true}; c.border=ab("thin","FFE2CDB8");
+        });
+        dr2.height = 60;
+      });
+    });
+    res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition","attachment; filename*=UTF-8''%EB%A7%90%EC%94%80%EB%85%B8%ED%8A%B8.xlsx");
+    await wb.xlsx.write(res); res.end();
+  } catch(err) {
+    console.error("[EXCEL]", err);
+    res.status(500).json({ error:"Excel 생성 실패: "+err.message });
+  }
+});
+
 // 헬스체크
 app.get("/api/health", (req, res) => {
   const { notes } = loadData();
