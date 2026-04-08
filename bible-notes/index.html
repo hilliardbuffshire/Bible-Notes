@@ -52,10 +52,10 @@ async function fetchEn(ref,tr='kjv'){
   const r=await fetch(`https://bible-api.com/${encodeURIComponent(parseRef(ref))}?translation=${tr}`);
   if(!r.ok)throw new Error();return r.json();
 }
-// 한국어 성경은 서버 프록시를 통해 fetch (getbible.net CORS 차단 우회)
+// 한국어 성경은 서버 프록시를 통해 fetch (getbible.net 브라우저 직접 호출 시 Cloudflare 차단)
 async function fetchKo(ref){
   try{
-    const r=await fetch(`${API}/bible/korean?ref=${encodeURIComponent(ref.trim())}`);
+    const r=await fetch(`${API}/bible/ko?ref=${encodeURIComponent(ref.trim())}`);
     if(!r.ok)return'';
     const d=await r.json();
     return d.text||'';
