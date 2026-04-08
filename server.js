@@ -207,84 +207,6 @@ app.delete("/api/notes/:noteId/comments/:commentId", (req, res) => {
   res.json({ success: true });
 });
 
-// Excel 내보내기
-app.get("/api/export/excel", async (req, res) => {
-  try {
-    const ExcelJS = require("exceljs");
-    const { notes } = loadData();
-    const wb = new ExcelJS.Workbook();
-    wb.creator = "말씀 노트 플랫폼"; wb.created = new Date();
-    const fill = a => ({ type:"pattern", pattern:"solid", fgColor:{argb:a} });
-    const fn = (sz, bold, color) => ({ name:"Malgun Gothic", size:sz, bold:!!bold, color:{argb: color||"FF3A1E08"} });
-    const bd = (s="thin",c="FFE2CDB8") => ({ style:s, color:{argb:c} });
-    const ab = (s,c) => ({ top:bd(s,c), left:bd(s,c), bottom:bd(s,c), right:bd(s,c) });
-
-    // ── Sheet1: 노트 목록 ──
-    const ws1 = wb.addWorksheet("노트 목록");
-    ws1.columns = [
-      {key:"no",width:6},{key:"title",width:30},{key:"date",width:13},{key:"church",width:18},
-      {key:"scr",width:26},{key:"summary",width:42},{key:"tags",width:22},{key:"youtube",width:32},{key:"content",width:55}
-    ];
-    ws1.mergeCells("A1:I1");
-    Object.assign(ws1.getCell("A1"), {
-      value:"📖 말씀 노트 목록", font:fn(16,true,"FF7B4B2A"), fill:fill("FFFDF6EE"),
-      alignment:{vertical:"middle",horizontal:"center"}
-    });
-    ws1.getRow(1).height = 38;
-    const hdr1 = ws1.addRow(["번호","제목","날짜","교회","본문 구절","핵심 요약","태그","유튜브","노트 내용"]);
-    hdr1.eachCell(c => { c.fill=fill("FF7B4B2A"); c.font=fn(11,true,"FFFFFFFF"); c.alignment={vertical:"middle",horizontal:"center",wrapText:true}; c.border=ab("thin","FF5C3317"); });
-    ws1.getRow(2).height = 30;
-    ws1.views = [{ state:"frozen", ySplit:2 }];
-    notes.forEach((note, i) => {
-      const scr = (note.mainScriptures || (note.mainScripture ? [note.mainScripture] : [])).join(" · ");
-      const dr = ws1.addRow([i+1, note.title||"", note.date||"", note.church||"", scr,
-        note.summary||"", (note.tags||[]).join(", "), note.youtubeUrl||"", note.content||""]);
-      dr.eachCell(c => { c.fill=fill(i%2===0?"FFFDF6EE":"FFFFFFFF"); c.font=fn(10); c.alignment={vertical:"top",wrapText:true}; });
-      dr.height = 65;
-    });
-
-    // ── Sheet2: 인용 성경구절 ──
-    const ws2 = wb.addWorksheet("인용 성경구절");
-    ws2.columns = [
-      {key:"noteTitle",width:26},{key:"ref",width:22},{key:"book",width:16},
-      {key:"ch",width:8},{key:"vs",width:8},{key:"en",width:48},{key:"ko",width:48}
-    ];
-    ws2.mergeCells("A1:G1");
-    Object.assign(ws2.getCell("A1"), {
-      value:"📜 인용 성경구절 목록", font:fn(15,true,"FF7B4B2A"), fill:fill("FFFDF6EE"),
-      alignment:{vertical:"middle",horizontal:"center"}
-    });
-    ws2.getRow(1).height = 36;
-    const hdr2 = ws2.addRow(["노트 제목","구절 참조","성경책","장","절","영어 본문","한국어 본문"]);
-    hdr2.eachCell(c => { c.fill=fill("FFC8780A"); c.font=fn(11,true,"FFFFFFFF"); c.alignment={vertical:"middle",horizontal:"center",wrapText:true}; c.border=ab("medium","FFA05008"); });
-    ws2.getRow(2).height = 30;
-    ws2.autoFilter = { from:{row:2,column:1}, to:{row:2,column:7} };
-    ws2.views = [{ state:"frozen", ySplit:2 }];
-    let vr = 2;
-    notes.forEach(note => {
-      (note.verses||[]).forEach(v => {
-        const ref = v.ref || v.enReference || v.korReference || "";
-        const koTxt = v.koText || v.korText || "";
-        const m = ref.match(/^(.+?)\s+(\d+):(\d+)/);
-        const [book,ch,vs] = m ? [m[1],parseInt(m[2]),parseInt(m[3])] : ["","",""];
-        vr++;
-        const dr2 = ws2.addRow([note.title||"", ref, book, ch||"", vs||"", v.text||"", koTxt]);
-        dr2.eachCell({includeEmpty:true}, c => {
-          c.fill=fill(vr%2===0?"FFFFFBEB":"FFFFFFFF"); c.font=fn(10);
-          c.alignment={vertical:"top",wrapText:true}; c.border=ab("thin","FFE2CDB8");
-        });
-        dr2.height = 60;
-      });
-    });
-    res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition","attachment; filename*=UTF-8''%EB%A7%90%EC%94%80%EB%85%B8%ED%8A%B8.xlsx");
-    await wb.xlsx.write(res); res.end();
-  } catch(err) {
-    console.error("[EXCEL]", err);
-    res.status(500).json({ error:"Excel 생성 실패: "+err.message });
-  }
-});
-
 // 헬스체크
 app.get("/api/health", (req, res) => {
   const { notes } = loadData();
@@ -299,96 +221,107 @@ app.get("/api/export/excel", async (req, res) => {
     const wb = new ExcelJS.Workbook();
     wb.creator = "말씀 노트 플랫폼";
 
-    const C = { BROWN:"7B4B2A", BLIGHT:"A0632F", AMBER:"C8780A", AMBLIGHT:"FEF3C7",
+    const C = { BROWN:"7B4B2A", BLIGHT:"A0632F", AMBER:"C8780A", AMBLIGHT:"FFF3C7",
                 CREAM:"FDF6EE", CREAMD:"FFF3E0", WHITE:"FFFFFF", ROWALT:"FFF8F0", BORDER:"E2CDB8" };
-    const F = (sz,bold,color)=>({name:"Malgun Gothic",size:sz,bold:!!bold,color:{argb:color||"3A1E08"}});
-    const FILL = c=>({type:"pattern",pattern:"solid",fgColor:{argb:c}});
-    const BORDER_ALL = c=>({top:{style:"thin",color:{argb:c}},bottom:{style:"thin",color:{argb:c}},left:{style:"thin",color:{argb:c}},right:{style:"thin",color:{argb:c}}});
-    const BORDER_BOT = c=>({bottom:{style:"thin",color:{argb:c}}});
+    const F  = (sz,bold,color)=>({name:"Malgun Gothic",size:sz,bold:!!bold,color:{argb:color||"3A1E08"}});
+    const FL = c=>({type:"pattern",pattern:"solid",fgColor:{argb:c}});
+    const BA = c=>({top:{style:"thin",color:{argb:c}},bottom:{style:"thin",color:{argb:c}},left:{style:"thin",color:{argb:c}},right:{style:"thin",color:{argb:c}}});
+    const BB = c=>({bottom:{style:"thin",color:{argb:c}}});
     const AL = (h,v,wrap)=>({horizontal:h||"left",vertical:v||"top",wrapText:!!wrap});
 
+    // 내용 길이 기반 행 높이 동적 계산
+    function calcH(cells, widths, min=45) {
+      let lines=0;
+      cells.forEach((txt,i)=>{
+        const s=String(txt||"");
+        const nl=s.split("\n").length;
+        const wrap=Math.ceil(s.length/Math.max(widths[i]*1.8,1));
+        lines=Math.max(lines,nl+wrap-1);
+      });
+      return Math.max(min, Math.min(lines*17, 420));
+    }
     function getBook(ref){
       const m=ref.match(/^(\d+\s+[\uAC00-\uD7A3a-zA-Z]+|[\uAC00-\uD7A3a-zA-Z]+)/);
       return m?m[1].trim():ref.split(" ")[0];
     }
 
     // ── Sheet 1: 말씀 노트 목록 ──
-    const ws1 = wb.addWorksheet("📚 말씀 노트 목록",{views:[{state:"frozen",ySplit:3}]});
-    const COLS1 = ["번호","제목","날짜","교회","본문 성경구절","요약","내용","태그","YouTube"];
-    const WIDTHS1 = [5,26,12,15,22,36,46,20,35];
+    const ws1=wb.addWorksheet("말씀 노트 목록",{views:[{state:"frozen",ySplit:3}]});
+    // 열 너비: 번호, 제목, 날짜, 교회, 본문구절, 요약, 내용, 태그, YouTube
+    const W1=[5,30,13,20,28,55,78,22,42];
+    const H1=["번호","제목","날짜","교회","본문 성경구절","핵심 요약","노트 내용","태그","YouTube 링크"];
+    W1.forEach((w,i)=>{ ws1.getColumn(i+1).width=w; });
 
     ws1.mergeCells("A1:I1");
-    Object.assign(ws1.getCell("A1"),{value:"📖 말씀 노트 플랫폼",font:F(17,true,"FFFFFF"),fill:FILL(C.BROWN),alignment:AL("center","middle")});
-    ws1.getRow(1).height=40;
-
+    Object.assign(ws1.getCell("A1"),{value:"📖 말씀 노트 플랫폼",font:F(17,true,"FFFFFF"),fill:FL(C.BROWN),alignment:AL("center","middle")});
+    ws1.getRow(1).height=42;
     ws1.mergeCells("A2:I2");
-    Object.assign(ws1.getCell("A2"),{value:`내보내기: ${new Date().toLocaleDateString("ko-KR")}  |  총 노트 ${notes.length}개`,font:F(9,false,C.BROWN),fill:FILL(C.CREAMD),alignment:AL("right","middle")});
-    ws1.getRow(2).height=20;
-
+    Object.assign(ws1.getCell("A2"),{value:`내보내기: ${new Date().toLocaleDateString("ko-KR")}  |  총 노트 ${notes.length}개`,font:F(9,false,C.BROWN),fill:FL(C.CREAMD),alignment:AL("right","middle")});
+    ws1.getRow(2).height=22;
     const hr1=ws1.getRow(3);
-    COLS1.forEach((h,i)=>{
+    H1.forEach((h,i)=>{
       const c=hr1.getCell(i+1);
-      Object.assign(c,{value:h,font:F(10,true,"FFFFFF"),fill:FILL(C.AMBER),alignment:AL("center","middle",true),border:BORDER_BOT(C.BROWN)});
+      Object.assign(c,{value:h,font:F(11,true,"FFFFFF"),fill:FL(C.AMBER),alignment:AL("center","middle",true),border:BB(C.BROWN)});
     });
-    hr1.height=26;
+    hr1.height=28;
     ws1.autoFilter={from:{row:3,column:1},to:{row:3,column:9}};
-    WIDTHS1.forEach((w,i)=>ws1.getColumn(i+1).width=w);
 
     notes.forEach((n,idx)=>{
+      const scr=(n.mainScripture||"").split("\n").filter(Boolean).join(" · ");
+      const cells=[idx+1,n.title||"",n.date||"",n.church||"",scr,n.summary||"",n.content||"",(n.tags||[]).join(", "),n.youtubeUrl||""];
       const r=ws1.getRow(idx+4);
       const bg=idx%2===0?C.WHITE:C.ROWALT;
-      const scr=Array.isArray(n.mainScriptures)?n.mainScriptures.join("\n"):(n.mainScripture||"");
-      [idx+1,n.title||"",n.date||"",n.church||"",scr,n.summary||"",n.content||"",(n.tags||[]).join(", "),n.youtubeUrl||""].forEach((v,i)=>{
+      cells.forEach((v,i)=>{
         const c=r.getCell(i+1);
-        c.value=v; c.fill=FILL(bg); c.alignment=AL(i<2||i>4?"left":"left","top",true); c.border=BORDER_BOT(C.BORDER);
+        c.value=v; c.fill=FL(bg); c.alignment=AL(i===0?"center":"left","top",true); c.border=BB(C.BORDER);
         c.font=i===1?F(10,true):F(10);
       });
-      r.getCell(1).alignment=AL("center","top");
-      r.height=65;
+      r.height=calcH(cells,W1,50);
     });
 
     // ── Sheet 2: 인용 성경 구절 ──
-    const ws2=wb.addWorksheet("📜 인용 성경 구절",{views:[{state:"frozen",ySplit:3}]});
-    const COLS2=["성경책","구절 참조","영어 본문","한국어 본문","노트 제목","날짜"];
-    const WIDTHS2=[14,18,50,44,26,12];
+    const ws2=wb.addWorksheet("인용 성경 구절",{views:[{state:"frozen",ySplit:3}]});
+    // 열 너비: 성경책, 구절참조, 영어본문, 한국어본문, 노트제목, 날짜
+    const W2=[16,22,68,62,30,13];
+    const H2=["성경책","구절 참조","영어 본문","한국어 본문","노트 제목","날짜"];
+    W2.forEach((w,i)=>{ ws2.getColumn(i+1).width=w; });
 
     ws2.mergeCells("A1:F1");
-    Object.assign(ws2.getCell("A1"),{value:"📜 인용 성경 구절 목록",font:F(15,true,"FFFFFF"),fill:FILL(C.BROWN),alignment:AL("center","middle")});
-    ws2.getRow(1).height=38;
-
-    const allVerses=notes.reduce((a,n)=>a+(n.verses||[]).length,0);
+    Object.assign(ws2.getCell("A1"),{value:"📜 인용 성경 구절 목록",font:F(15,true,"FFFFFF"),fill:FL(C.BROWN),alignment:AL("center","middle")});
+    ws2.getRow(1).height=40;
+    const allV=notes.reduce((a,n)=>a+(n.verses||[]).length,0);
     ws2.mergeCells("A2:F2");
-    Object.assign(ws2.getCell("A2"),{value:`총 인용 구절 ${allVerses}개  |  ▼ 헤더 클릭으로 성경책별 필터링 가능`,font:F(9,false,C.BROWN),fill:FILL(C.CREAMD),alignment:AL("right","middle")});
-    ws2.getRow(2).height=20;
-
+    Object.assign(ws2.getCell("A2"),{value:`총 ${allV}개  |  성경책 열(A)의 ▼ 버튼으로 성경책별 필터링 가능`,font:F(9,false,C.BROWN),fill:FL(C.CREAMD),alignment:AL("right","middle")});
+    ws2.getRow(2).height=22;
     const hr2=ws2.getRow(3);
-    COLS2.forEach((h,i)=>{
+    H2.forEach((h,i)=>{
       const c=hr2.getCell(i+1);
-      Object.assign(c,{value:h,font:F(10,true,"FFFFFF"),fill:FILL(C.BROWN),alignment:AL("center","middle",true),border:BORDER_ALL(C.AMBER)});
+      Object.assign(c,{value:h,font:F(11,true,"FFFFFF"),fill:FL(C.BROWN),alignment:AL("center","middle",true),border:BA(C.AMBER)});
     });
-    ws2.getRow(3).height=26;
+    ws2.getRow(3).height=28;
     ws2.autoFilter={from:{row:3,column:1},to:{row:3,column:6}};
-    WIDTHS2.forEach((w,i)=>ws2.getColumn(i+1).width=w);
 
     let vr=4;
     notes.forEach(n=>{
       (n.verses||[]).forEach(v=>{
         const ref=v.ref||v.enReference||"";
+        const en=v.text||""; const ko=v.koText||v.korText||"";
+        const cells=[getBook(ref),ref,en,ko,n.title||"",n.date||""];
         const row=ws2.getRow(vr);
         const bg=(vr-4)%2===0?C.WHITE:C.AMBLIGHT;
-        [getBook(ref),ref,v.text||"",v.koText||v.korText||"",n.title||"",n.date||""].forEach((val,i)=>{
+        cells.forEach((val,i)=>{
           const c=row.getCell(i+1);
-          c.value=val; c.fill=FILL(bg); c.alignment=AL("left","top",true); c.border=BORDER_ALL(C.BORDER);
+          c.value=val; c.fill=FL(bg); c.alignment=AL("left","top",true); c.border=BA(C.BORDER);
           c.font=i<2?F(10,true,C.BLIGHT):F(10);
         });
-        row.height=60; vr++;
+        row.height=calcH(cells,W2,55);
+        vr++;
       });
     });
 
     res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition",`attachment; filename*=UTF-8''${encodeURIComponent("말씀노트.xlsx")}`);
-    await wb.xlsx.write(res);
-    res.end();
+    await wb.xlsx.write(res); res.end();
   } catch(e) {
     console.error("[EXCEL]",e);
     res.status(500).json({error:e.message});
