@@ -152,6 +152,34 @@ function CrossRefMap({note,all}){
   </div></div>;
 }
 
+// ── 구절 아이템 (한국어 자동 fetch) ──
+function VerseItem({v,size='detail'}){
+  const [ko,setKo]=useState(v.koText||'');
+  const [ldKo,setLdKo]=useState(false);
+  useEffect(()=>{
+    if(!v.koText&&v.ref){
+      setLdKo(true);
+      fetchKo(v.ref).then(t=>{setKo(t);setLdKo(false);}).catch(()=>setLdKo(false));
+    }
+  },[v.ref,v.koText]);
+  const fs=size==='detail'?'15px':'14px';
+  const fw=size==='detail'?800:700;
+  const refSz=size==='detail'?'17px':'15px';
+  return<div className="verse-box">
+    <div style={{fontWeight:fw,color:'#7b3f00',fontSize:refSz,marginBottom:'7px'}}>📖 {v.ref}</div>
+    <div style={{fontSize:fs,lineHeight:1.9,color:'#4a2c10'}}>{v.text}</div>
+    <div style={{marginTop:'8px',paddingTop:'8px',borderTop:'1px solid #d1fae5'}}>
+      <div style={{fontSize:'11px',fontWeight:700,color:'#059669',textTransform:'uppercase',marginBottom:'3px'}}>한국어 번역</div>
+      {ldKo
+        ? <div style={{fontSize:'12px',color:'var(--am)'}}>불러오는 중...</div>
+        : ko
+          ? <div style={{fontSize:fs,color:'#065f46',lineHeight:1.9}}>{ko}</div>
+          : <div style={{fontSize:'12px',color:'#9ca3af'}}>—</div>
+      }
+    </div>
+  </div>;
+}
+
 // ── 구절 검색 패널 ──
 function VerseSearch({onAdd}){
   const [q,setQ]=useState('');const [tr,setTr]=useState('kjv');
@@ -188,7 +216,7 @@ function VerseSearch({onAdd}){
 
 // ── 노트 에디터 ──
 function NoteEditor({initial,onSave,onCancel}){
-  const blank={title:'',date:new Date().toISOString().split('T')[0],church:'',mainScripture:'',summary:'',content:'',tags:[],verses:[],youtubeUrl:''};
+  const blank={title:'',date:new Date().toISOString().split('T')[0],church:'부산제일교회',mainScripture:'',summary:'',content:'',tags:[],verses:[],youtubeUrl:''};
   const [form,setForm]=useState(initial?{...blank,...initial}:{...blank});
   const [tagIn,setTagIn]=useState('');const [scrIn,setScrIn]=useState('');
   const [addingKo,setAddingKo]=useState({});  // {id: bool} fetching status
@@ -221,15 +249,25 @@ function NoteEditor({initial,onSave,onCancel}){
     if(id)setForm(f=>({...f,verses:(f.verses||[]).filter(v=>v.id!==id)}));
   };
 
-  // 내용 텍스트에서 [구절] 패턴 감지
+  // 내용 텍스트에서 [구절] 또는 책명 장:절 패턴 감지
   useEffect(()=>{
     clearTimeout(deb.current);
     deb.current=setTimeout(()=>{
-      const found=[];const re=/\[([^\]]{3,40})\]/g;let m;
-      while((m=re.exec(form.content))!==null){
+      const found=[];const already=r=>form.verses.some(v=>v.ref===r||v.ref.startsWith(r));
+      // Pass 1: [bookname ch:vs] 대괄호 패턴
+      const re1=/\[([^\]]{3,40})\]/g;let m;
+      while((m=re1.exec(form.content))!==null){
         const ref=m[1].trim();
-        const isValid=KO.some(k=>ref.startsWith(k))||EN.some(e=>ref.toLowerCase().startsWith(e.toLowerCase()));
-        if(isValid&&!form.verses.some(v=>v.ref===ref))found.push(ref);
+        const ok=KO.some(k=>ref.startsWith(k))||EN.some(e=>ref.toLowerCase().startsWith(e.toLowerCase()));
+        if(ok&&!already(ref)&&!found.includes(ref))found.push(ref);
+      }
+      // Pass 2: bookname ch:vs 대괄호 없는 직접 패턴 (한국어 책명만)
+      for(const k of KO){
+        const re2=new RegExp(k+'\\s*(\\d+):(\\d+)','g');
+        while((m=re2.exec(form.content))!==null){
+          const ref=`${k} ${m[1]}:${m[2]}`;
+          if(!already(ref)&&!found.includes(ref))found.push(ref);
+        }
       }
       setSugRefs([...new Set(found)]);
     },600);
@@ -313,13 +351,9 @@ function NoteEditor({initial,onSave,onCancel}){
       {form.verses.length>0&&<div>
         {L(`추가된 인용 구절 (${form.verses.length})`)}
         <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
-          {form.verses.map(v=><div key={v.id} className="verse-box" style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:700,color:'#7b3f00',fontSize:'15px',marginBottom:'4px'}}>📖 {v.ref}</div>
-              <div style={{fontSize:'14px',color:'#4a2c10',lineHeight:1.8}}>{v.text}</div>
-              {v.koText&&<div style={{fontSize:'14px',color:'#059669',marginTop:'6px',lineHeight:1.8,fontStyle:'italic',borderTop:'1px solid #d1fae5',paddingTop:'6px'}}>{v.koText}</div>}
-            </div>
-            <button onClick={()=>rmVerse(v.id)} style={{color:'#ef4444',marginLeft:'10px',fontSize:'20px',lineHeight:1,background:'none',border:'none',cursor:'pointer'}}>×</button>
+          {form.verses.map(v=><div key={v.id} style={{display:'flex',alignItems:'flex-start',gap:'8px'}}>
+            <div style={{flex:1}}><VerseItem v={v} size="editor"/></div>
+            <button onClick={()=>rmVerse(v.id)} style={{color:'#ef4444',fontSize:'20px',lineHeight:1,background:'none',border:'none',cursor:'pointer',paddingTop:'14px'}}>×</button>
           </div>)}
         </div>
       </div>}
@@ -405,11 +439,7 @@ function NoteDetail({note,all,onEdit,onClose,onLike,onComment,onDelete}){
         </div>}
         {tab==='verses'&&(note.verses?.length?
           <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
-            {note.verses.map((v,i)=><div key={v.id||i} className="verse-box">
-              <div style={{fontWeight:800,color:'#7b3f00',fontSize:'17px',marginBottom:'7px'}}>📖 {v.ref}</div>
-              <div style={{fontSize:'15px',lineHeight:1.9}}>{v.text}</div>
-              {v.koText&&<div style={{color:'#059669',marginTop:'9px',fontSize:'15px',lineHeight:1.9,fontStyle:'italic',borderTop:'1px solid #d1fae5',paddingTop:'9px'}}>{v.koText}</div>}
-            </div>)}
+            {note.verses.map((v,i)=><VerseItem key={v.id||i} v={v} size="detail"/>)}
           </div>:
           <div style={{textAlign:'center',padding:'32px',color:'#b08060',fontSize:'14px'}}>인용 구절이 없습니다.</div>
         )}
@@ -529,7 +559,7 @@ function App(){
   };
 
   return<div style={{minHeight:'100vh',background:'var(--cr)'}}>
-    <header className="np" style={{background:'var(--bm)',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 8px rgba(0,0,0,.25)'}}>
+    <header className="np" style={{background:'#7C4A28',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 8px rgba(0,0,0,.25)'}}>
       <div style={{maxWidth:'900px',margin:'0 auto',padding:'11px 16px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
         <div style={{display:'flex',alignItems:'center',gap:'9px',cursor:'pointer'}} onClick={()=>{setView('list');setSel(null);setEditT(null);}}>
           <div style={{width:'34px',height:'34px',background:'rgba(255,255,255,.2)',borderRadius:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px'}}>📖</div>
