@@ -226,43 +226,47 @@ app.delete("/api/notes/:noteId/comments/:commentId", (req, res) => {
   res.json({ success: true });
 });
 
-// ── 한국어 성경 프록시 (브라우저 CORS 우회) ──
-const KO_SRV=['창세기','출애굽기','레위기','민수기','신명기','여호수아','사사기','룻기','사무엘상','사무엘하','열왕기상','열왕기하','역대상','역대하','에스라','느헤미야','에스더','욥기','시편','잠언','전도서','아가','이사야','예레미야','예레미야애가','에스겔','다니엘','호세아','요엘','아모스','오바댜','요나','미가','나훔','하박국','스바냐','학개','스가랴','말라기','마태복음','마가복음','누가복음','요한복음','사도행전','로마서','고린도전서','고린도후서','갈라디아서','에베소서','빌립보서','골로새서','데살로니가전서','데살로니가후서','디모데전서','디모데후서','디도서','빌레몬서','히브리서','야고보서','베드로전서','베드로후서','요한일서','요한이서','요한삼서','유다서','요한계시록'];
+// ── 한국어 성경 (GitHub CDN 캐시 방식) ──
 const EN_SRV=['Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth','1 Samuel','2 Samuel','1 Kings','2 Kings','1 Chronicles','2 Chronicles','Ezra','Nehemiah','Esther','Job','Psalms','Proverbs','Ecclesiastes','Song of Solomon','Isaiah','Jeremiah','Lamentations','Ezekiel','Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk','Zephaniah','Haggai','Zechariah','Malachi','Matthew','Mark','Luke','John','Acts','Romans','1 Corinthians','2 Corinthians','Galatians','Ephesians','Philippians','Colossians','1 Thessalonians','2 Thessalonians','1 Timothy','2 Timothy','Titus','Philemon','Hebrews','James','1 Peter','2 Peter','1 John','2 John','3 John','Jude','Revelation'];
 
-app.get("/api/bible/korean", async (req, res) => {
-  const ref = (req.query.ref || '').trim();
-  let idx = -1;
-  for (let i = 0; i < KO_SRV.length; i++) { if (ref.startsWith(KO_SRV[i])) { idx = i; break; } }
-  if (idx === -1) for (let i = 0; i < EN_SRV.length; i++) { if (ref.toLowerCase().startsWith(EN_SRV[i].toLowerCase())) { idx = i; break; } }
-  if (idx === -1) return res.json({ text: '' });
-  const bookName = KO_SRV[idx] || EN_SRV[idx];
-  const rest = ref.slice(bookName.length).trim();
-  const m = rest.match(/(\d+):(\d+)/);
-  if (!m) return res.json({ text: '' });
-  try {
-    const apiUrl = `https://getbible.net/v2/korean/${idx + 1}/${m[1]}.json`;
-    const r = await fetch(apiUrl);
-    if (!r.ok) return res.json({ text: '' });
-    const d = await r.json();
-    const vk = String(parseInt(m[2]));
-    const text = (d.verses?.[vk]?.verse || d.verses?.[vk]?.text || '').trim();
-    res.json({ text });
-  } catch (e) {
-    res.json({ text: '' });
+// 서버 시작 시 한국어 성경 JSON 다운로드 후 메모리 캐시
+let KO_DB = null;
+(async () => {
+  const SRCS = [
+    'https://cdn.jsdelivr.net/gh/Bolderaysky/BibleAPI@master/ko.json',
+    'https://raw.githubusercontent.com/Bolderaysky/BibleAPI/master/ko.json',
+    'https://cdn.jsdelivr.net/gh/thiagobodruk/bible@master/json/ko_ko.json',
+    'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/ko_ko.json',
+  ];
+  for (const url of SRCS) {
+    try {
+      const { status, body } = await fetchUrl(url);
+      if (status === 200) {
+        const d = JSON.parse(body);
+        if (Array.isArray(d) && d.length >= 66) {
+          KO_DB = d; console.log('✅ 한국어 성경 로드 완료:', url); break;
+        }
+      }
+    } catch {}
   }
-});
+  if (!KO_DB) console.log('⚠️ 한국어 성경 캐시 로드 실패');
+})();
 
-// ── 한국어 성경 프록시 (한국어·영어 책명 모두 처리) ──
-const ABBRS=['gen','exo','lev','num','deu','jos','jdg','rut','1sa','2sa','1ki','2ki','1ch','2ch','ezr','neh','est','job','psa','pro','ecc','sng','isa','jer','lam','eze','dan','hos','joe','amo','oba','jon','mic','nah','hab','zep','hag','zec','mal','mat','mar','luk','joh','act','rom','1co','2co','gal','eph','phi','col','1th','2th','1ti','2ti','tit','phm','heb','jas','1pe','2pe','1jo','2jo','3jo','jud','rev'];
+function lookupKo(bookIdx, ch, vs) {
+  if (!KO_DB || !KO_DB[bookIdx]) return '';
+  const chapters = KO_DB[bookIdx].chapters || KO_DB[bookIdx];
+  if (!Array.isArray(chapters)) return '';
+  const chArr = chapters[ch - 1];
+  if (!Array.isArray(chArr)) return '';
+  return (chArr[vs - 1] || '').toString().trim();
+}
+
 app.get("/api/bible/ko", async (req, res) => {
   const ref = (req.query.ref || '').trim();
   let idx = -1, matchLen = 0;
-  // 한국어 책명
   for (let i = 0; i < KO_BOOKS.length; i++) {
     if (ref.startsWith(KO_BOOKS[i])) { idx = i; matchLen = KO_BOOKS[i].length; break; }
   }
-  // 영어 책명 (Proverbs, John, 1 Corinthians 등)
   if (idx === -1) {
     for (let i = 0; i < EN_SRV.length; i++) {
       if (ref.toLowerCase().startsWith(EN_SRV[i].toLowerCase())) { idx = i; matchLen = EN_SRV[i].length; break; }
@@ -272,24 +276,18 @@ app.get("/api/bible/ko", async (req, res) => {
   const rest = ref.slice(matchLen).trim();
   const m = rest.match(/(\d+):(\d+)/);
   if (!m) return res.json({ text: '' });
-  const chapter = m[1], verse = String(parseInt(m[2]));
 
-  // 1차: getbible.net
+  // 1차: 메모리 캐시 (개역개정 JSON)
+  const cached = lookupKo(idx, parseInt(m[1]), parseInt(m[2]));
+  if (cached && cached.length > 2) return res.json({ text: cached });
+
+  // 2차: getbible.net (오류 응답 필터링)
   try {
-    const { status, body } = await fetchUrl(`https://getbible.net/v2/korean/${idx+1}/${chapter}.json`);
-    if (status === 200) {
+    const { status, body } = await fetchUrl(`https://getbible.net/v2/korean/${idx+1}/${m[1]}.json`);
+    if (status === 200 && body.includes('"verses"') && !body.includes('Access denied')) {
       const d = JSON.parse(body);
-      const text = (d.verses?.[verse]?.verse || d.verses?.[verse]?.text || '').trim();
+      const text = (d.verses?.[String(parseInt(m[2]))]?.verse || '').trim();
       if (text) return res.json({ text });
-    }
-  } catch {}
-
-  // 2차: ibibles.net fallback
-  try {
-    const { status: s2, body: b2 } = await fetchUrl(`https://ibibles.net/quote.php?kor-${ABBRS[idx]}/${chapter}:${verse}`);
-    if (s2 === 200 && b2) {
-      const text = b2.replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
-      if (text && text.length > 3) return res.json({ text });
     }
   } catch {}
 
