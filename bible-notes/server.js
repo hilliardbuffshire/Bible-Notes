@@ -8,6 +8,25 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const https = require("https");
+
+// 한국어 성경 책명 → 번호 매핑
+const KO_BOOKS = ['창세기','출애굽기','레위기','민수기','신명기','여호수아','사사기','룻기','사무엘상','사무엘하','열왕기상','열왕기하','역대상','역대하','에스라','느헤미야','에스더','욥기','시편','잠언','전도서','아가','이사야','예레미야','예레미야애가','에스겔','다니엘','호세아','요엘','아모스','오바댜','요나','미가','나훔','하박국','스바냐','학개','스가랴','말라기','마태복음','마가복음','누가복음','요한복음','사도행전','로마서','고린도전서','고린도후서','갈라디아서','에베소서','빌립보서','골로새서','데살로니가전서','데살로니가후서','디모데전서','디모데후서','디도서','빌레몬서','히브리서','야고보서','베드로전서','베드로후서','요한일서','요한이서','요한삼서','유다서','요한계시록'];
+
+function fetchUrl(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json,*/*'
+      }
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    }).on('error', reject);
+  });
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -226,6 +245,30 @@ app.get("/api/bible/korean", async (req, res) => {
     const r = await fetch(apiUrl);
     if (!r.ok) return res.json({ text: '' });
     const d = await r.json();
+    const vk = String(parseInt(m[2]));
+    const text = (d.verses?.[vk]?.verse || d.verses?.[vk]?.text || '').trim();
+    res.json({ text });
+  } catch (e) {
+    res.json({ text: '' });
+  }
+});
+
+// ── 한국어 성경 프록시 (브라우저→서버→getbible.net) ──
+app.get("/api/bible/ko", async (req, res) => {
+  const ref = (req.query.ref || '').trim();
+  let idx = -1, bookName = '';
+  for (let i = 0; i < KO_BOOKS.length; i++) {
+    if (ref.startsWith(KO_BOOKS[i])) { idx = i; bookName = KO_BOOKS[i]; break; }
+  }
+  if (idx === -1) return res.json({ text: '' });
+  const rest = ref.slice(bookName.length).trim();
+  const m = rest.match(/(\d+):(\d+)/);
+  if (!m) return res.json({ text: '' });
+  try {
+    const url = `https://getbible.net/v2/korean/${idx + 1}/${m[1]}.json`;
+    const { status, body } = await fetchUrl(url);
+    if (status !== 200) return res.json({ text: '' });
+    const d = JSON.parse(body);
     const vk = String(parseInt(m[2]));
     const text = (d.verses?.[vk]?.verse || d.verses?.[vk]?.text || '').trim();
     res.json({ text });
