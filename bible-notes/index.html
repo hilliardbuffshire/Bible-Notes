@@ -52,21 +52,13 @@ async function fetchEn(ref,tr='kjv'){
   const r=await fetch(`https://bible-api.com/${encodeURIComponent(parseRef(ref))}?translation=${tr}`);
   if(!r.ok)throw new Error();return r.json();
 }
+// 한국어 성경은 서버 프록시를 통해 fetch (getbible.net CORS 차단 우회)
 async function fetchKo(ref){
-  const t=ref.trim();let idx=-1;
-  for(let i=0;i<KO.length;i++){if(t.startsWith(KO[i])){idx=i;break;}}
-  if(idx===-1)for(let i=0;i<EN.length;i++){if(t.toLowerCase().startsWith(EN[i].toLowerCase())){idx=i;break;}}
-  if(idx===-1)return'';
-  const bookTxt=idx<KO.length?KO[idx]:EN[idx];
-  const rest=t.slice(bookTxt.length).trim();
-  const m=rest.match(/(\d+):(\d+)/);if(!m)return'';
   try{
-    const r=await fetch(`https://getbible.net/v2/korean/${idx+1}/${m[1]}.json`);
+    const r=await fetch(`${API}/bible/korean?ref=${encodeURIComponent(ref.trim())}`);
     if(!r.ok)return'';
     const d=await r.json();
-    // verses는 {"1":{verse:"..."}, "16":{verse:"..."}} 형태의 객체 — 문자열 키로 접근
-    const vk=String(parseInt(m[2]));
-    return(d.verses?.[vk]?.verse||d.verses?.[vk]?.text||'').trim();
+    return d.text||'';
   }catch{return'';}
 }
 
