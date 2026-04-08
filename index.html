@@ -52,19 +52,13 @@ async function fetchEn(ref,tr='kjv'){
   const r=await fetch(`https://bible-api.com/${encodeURIComponent(parseRef(ref))}?translation=${tr}`);
   if(!r.ok)throw new Error();return r.json();
 }
+// 한국어 성경은 서버 프록시를 통해 fetch (getbible.net 브라우저 직접 호출 시 Cloudflare 차단)
 async function fetchKo(ref){
-  const t=ref.trim();let idx=-1;
-  for(let i=0;i<KO.length;i++){if(t.startsWith(KO[i])){idx=i;break;}}
-  if(idx===-1)for(let i=0;i<EN.length;i++){if(t.toLowerCase().startsWith(EN[i].toLowerCase())){idx=i;break;}}
-  if(idx===-1)return'';
-  const bookTxt=idx<KO.length?KO[idx]:EN[idx];
-  const rest=t.slice(bookTxt.length).trim();
-  const m=rest.match(/(\d+):(\d+)/);if(!m)return'';
   try{
-    const r=await fetch(`https://getbible.net/v2/korean/${idx+1}/${m[1]}.json`);
+    const r=await fetch(`${API}/bible/ko?ref=${encodeURIComponent(ref.trim())}`);
     if(!r.ok)return'';
     const d=await r.json();
-    return(d.verses?.[parseInt(m[2])]?.verse||d.verses?.[parseInt(m[2])]?.text||'').trim();
+    return d.text||'';
   }catch{return'';}
 }
 
@@ -152,6 +146,35 @@ function CrossRefMap({note,all}){
   </div></div>;
 }
 
+// ── 구절 아이템 (한국어 자동 fetch) ──
+function VerseItem({v,size='detail'}){
+  const [ko,setKo]=useState(v.koText||'');
+  const [ldKo,setLdKo]=useState(false);
+  useEffect(()=>{
+    if(!v.koText&&v.ref){
+      setLdKo(true);
+      fetchKo(v.ref).then(t=>{setKo(t);setLdKo(false);}).catch(()=>setLdKo(false));
+    }
+  },[v.ref,v.koText]);
+  const fs=size==='detail'?'15px':'14px';
+  const fw=size==='detail'?800:700;
+  const refSz=size==='detail'?'17px':'15px';
+  return<div className="verse-box">
+    <div style={{fontWeight:fw,color:'#7b3f00',fontSize:refSz,marginBottom:'7px'}}>📖 {v.ref}</div>
+    {/* 영어 원문 */}
+    <div style={{fontSize:'11px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',marginBottom:'4px',letterSpacing:'0.5px'}}>English (KJV)</div>
+    <div style={{fontSize:fs,lineHeight:1.9,color:'#4a2c10',marginBottom:'10px',paddingBottom:'10px',borderBottom:'1px solid #fde68a'}}>{v.text||<span style={{color:'#ccc',fontSize:'13px'}}>—</span>}</div>
+    {/* 한국어 번역 */}
+    <div style={{fontSize:'11px',fontWeight:700,color:'#059669',textTransform:'uppercase',marginBottom:'4px',letterSpacing:'0.5px'}}>🇰🇷 한국어 (개역개정)</div>
+    {ldKo
+      ? <div style={{fontSize:'13px',color:'var(--am)'}}>불러오는 중...</div>
+      : ko
+        ? <div style={{fontSize:fs,color:'#065f46',lineHeight:1.9,fontWeight:500}}>{ko}</div>
+        : <div style={{fontSize:'12px',color:'#9ca3af'}}>한국어 번역 없음</div>
+    }
+  </div>;
+}
+
 // ── 구절 검색 패널 ──
 function VerseSearch({onAdd}){
   const [q,setQ]=useState('');const [tr,setTr]=useState('kjv');
@@ -187,13 +210,14 @@ function VerseSearch({onAdd}){
 }
 
 // ── 노트 에디터 ──
-function NoteEditor({initial,onSave,onCancel}){
-  const blank={title:'',date:new Date().toISOString().split('T')[0],church:'',mainScripture:'',summary:'',content:'',tags:[],verses:[],youtubeUrl:''};
+function NoteEditor({initial,onSave,onCancel,dfltChurch}){
+  const blank={title:'',date:new Date().toISOString().split('T')[0],church:dfltChurch||'부산제일교회',mainScripture:'',summary:'',content:'',tags:[],verses:[],youtubeUrl:''};
   const [form,setForm]=useState(initial?{...blank,...initial}:{...blank});
   const [tagIn,setTagIn]=useState('');const [scrIn,setScrIn]=useState('');
   const [addingKo,setAddingKo]=useState({});  // {id: bool} fetching status
-  const [sugRefs,setSugRefs]=useState([]);     // bracket-detected refs
+  const [autoAddInfo,setAutoAddInfo]=useState(''); // auto-add status msg
   const deb=useRef(null);const mvIds=useRef({});
+  const autoAdded=useRef(new Set(initial?(initial.verses||[]).map(v=>v.ref):[])); // 이미 추가된 ref 추적
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const scrs=parseScrs(form.mainScripture);
 
@@ -221,32 +245,49 @@ function NoteEditor({initial,onSave,onCancel}){
     if(id)setForm(f=>({...f,verses:(f.verses||[]).filter(v=>v.id!==id)}));
   };
 
-  // 내용 텍스트에서 [구절] 패턴 감지
+  // 내용 텍스트에서 [구절] 또는 책명 장:절 패턴 감지 → 자동 추가
   useEffect(()=>{
     clearTimeout(deb.current);
     deb.current=setTimeout(()=>{
-      const found=[];const re=/\[([^\]]{3,40})\]/g;let m;
-      while((m=re.exec(form.content))!==null){
+      const found=[];
+      // Pass 1: [bookname ch:vs] 대괄호 패턴
+      const re1=/\[([^\]]{3,40})\]/g;let m;
+      while((m=re1.exec(form.content))!==null){
         const ref=m[1].trim();
-        const isValid=KO.some(k=>ref.startsWith(k))||EN.some(e=>ref.toLowerCase().startsWith(e.toLowerCase()));
-        if(isValid&&!form.verses.some(v=>v.ref===ref))found.push(ref);
+        const ok=KO.some(k=>ref.startsWith(k))||EN.some(e=>ref.toLowerCase().startsWith(e.toLowerCase()));
+        if(ok&&!autoAdded.current.has(ref)&&!found.includes(ref))found.push(ref);
       }
-      setSugRefs([...new Set(found)]);
-    },600);
-  },[form.content,form.verses]);
-
-  const addSugRef=async ref=>{
-    setSugRefs(s=>s.filter(x=>x!==ref));
-    const vId=uid();
-    try{
-      const d=await fetchEn(ref,'kjv');
-      const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
-      const koTxt=await fetchKo(ref);
-      setForm(f=>({...f,verses:[...(f.verses||[]),{id:vId,ref:d.reference,text:enTxt,koText:koTxt}]}));
-    }catch{
-      setForm(f=>({...f,verses:[...(f.verses||[]),{id:vId,ref,text:'',koText:''}]}));
-    }
-  };
+      // Pass 2: bookname ch:vs 직접 패턴 (한국어)
+      for(const k of KO){
+        const re2=new RegExp(k+'\\s*(\\d+):(\\d+)','g');
+        while((m=re2.exec(form.content))!==null){
+          const ref=`${k} ${m[1]}:${m[2]}`;
+          if(!autoAdded.current.has(ref)&&!found.includes(ref))found.push(ref);
+        }
+      }
+      if(!found.length)return;
+      setAutoAddInfo(`⏳ ${found.length}개 구절 자동 추가 중...`);
+      found.forEach(async ref=>{
+        autoAdded.current.add(ref);
+        const vId=uid();
+        try{
+          const d=await fetchEn(ref,'kjv');
+          const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
+          const koTxt=await fetchKo(ref);
+          setForm(f=>{
+            if((f.verses||[]).some(v=>v.ref===d.reference||v.ref===ref))return f;
+            return{...f,verses:[...(f.verses||[]),{id:vId,ref:d.reference,text:enTxt,koText:koTxt}]};
+          });
+        }catch{
+          setForm(f=>{
+            if((f.verses||[]).some(v=>v.ref===ref))return f;
+            return{...f,verses:[...(f.verses||[]),{id:vId,ref,text:'',koText:''}]};
+          });
+        }
+        setAutoAddInfo('');
+      });
+    },1200);
+  },[form.content]);
 
   const addTag=()=>{const t=tagIn.trim().replace(/^#/,'');if(t&&!form.tags.includes(t))set('tags',[...form.tags,t]);setTagIn('');};
   const rmTag=t=>set('tags',form.tags.filter(x=>x!==t));
@@ -294,13 +335,8 @@ function NoteEditor({initial,onSave,onCancel}){
       <div>
         {L('노트 내용','내용에서 [요한복음 3:16] 형식으로 쓰면 자동으로 인용에 추가 제안됨')}
         <textarea value={form.content} onChange={e=>set('content',e.target.value)} rows={8} style={{resize:'vertical',fontSize:'15px',lineHeight:1.8}} placeholder="설교 내용, 묵상, 적용점, 기도 제목 등 자유롭게...&#10;&#10;구절 인용 예: [요한복음 3:16] 또는 [Romans 8:28]"/>
-        {/* 대괄호 감지 구절 제안 */}
-        {sugRefs.length>0&&<div style={{background:'#fff8e8',border:'1px solid #fde68a',borderRadius:'10px',padding:'10px 13px',marginTop:'6px'}}>
-          <div style={{fontSize:'12px',fontWeight:700,color:'#7b3f00',marginBottom:'6px'}}>✨ 인용구절 추가 제안</div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:'5px'}}>
-            {sugRefs.map(r=><button key={r} onClick={()=>addSugRef(r)} style={{background:'#fff3d6',border:'1px solid #fde68a',borderRadius:'8px',padding:'5px 11px',cursor:'pointer',fontSize:'13px',color:'#7b3f00',fontWeight:600}}>+ {r}</button>)}
-          </div>
-        </div>}
+        {/* 자동 추가 진행 중 표시 */}
+        {autoAddInfo&&<div style={{background:'#fff8e8',border:'1px solid #fde68a',borderRadius:'8px',padding:'8px 12px',marginTop:'6px',fontSize:'13px',color:'var(--am)',fontWeight:600}}>{autoAddInfo}</div>}
       </div>
 
       {/* 요약 */}
@@ -313,13 +349,9 @@ function NoteEditor({initial,onSave,onCancel}){
       {form.verses.length>0&&<div>
         {L(`추가된 인용 구절 (${form.verses.length})`)}
         <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
-          {form.verses.map(v=><div key={v.id} className="verse-box" style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:700,color:'#7b3f00',fontSize:'15px',marginBottom:'4px'}}>📖 {v.ref}</div>
-              <div style={{fontSize:'14px',color:'#4a2c10',lineHeight:1.8}}>{v.text}</div>
-              {v.koText&&<div style={{fontSize:'14px',color:'#059669',marginTop:'6px',lineHeight:1.8,fontStyle:'italic',borderTop:'1px solid #d1fae5',paddingTop:'6px'}}>{v.koText}</div>}
-            </div>
-            <button onClick={()=>rmVerse(v.id)} style={{color:'#ef4444',marginLeft:'10px',fontSize:'20px',lineHeight:1,background:'none',border:'none',cursor:'pointer'}}>×</button>
+          {form.verses.map(v=><div key={v.id} style={{display:'flex',alignItems:'flex-start',gap:'8px'}}>
+            <div style={{flex:1}}><VerseItem v={v} size="editor"/></div>
+            <button onClick={()=>rmVerse(v.id)} style={{color:'#ef4444',fontSize:'20px',lineHeight:1,background:'none',border:'none',cursor:'pointer',paddingTop:'14px'}}>×</button>
           </div>)}
         </div>
       </div>}
@@ -405,11 +437,7 @@ function NoteDetail({note,all,onEdit,onClose,onLike,onComment,onDelete}){
         </div>}
         {tab==='verses'&&(note.verses?.length?
           <div style={{display:'flex',flexDirection:'column',gap:'12px'}}>
-            {note.verses.map((v,i)=><div key={v.id||i} className="verse-box">
-              <div style={{fontWeight:800,color:'#7b3f00',fontSize:'17px',marginBottom:'7px'}}>📖 {v.ref}</div>
-              <div style={{fontSize:'15px',lineHeight:1.9}}>{v.text}</div>
-              {v.koText&&<div style={{color:'#059669',marginTop:'9px',fontSize:'15px',lineHeight:1.9,fontStyle:'italic',borderTop:'1px solid #d1fae5',paddingTop:'9px'}}>{v.koText}</div>}
-            </div>)}
+            {note.verses.map((v,i)=><VerseItem key={v.id||i} v={v} size="detail"/>)}
           </div>:
           <div style={{textAlign:'center',padding:'32px',color:'#b08060',fontSize:'14px'}}>인용 구절이 없습니다.</div>
         )}
@@ -468,13 +496,13 @@ function NoteCard({note,all,onClick}){
 
 // ── 샘플 ──
 const INIT=[
-  {id:'s1',title:'하나님의 크신 사랑',date:'2026-04-05',church:'은혜제일교회',mainScripture:'요한복음 3:16\n로마서 5:8',
+  {id:'s1',title:'하나님의 크신 사랑',date:'2026-04-05',church:'부산제일교회',mainScripture:'요한복음 3:16\n로마서 5:8',
    summary:'하나님은 세상을 이처럼 사랑하사 독생자를 주셨으니, 믿는 자마다 멸망하지 않고 영생을 얻게 하려 하심이라.',
    content:'▶ 핵심 메시지\n하나님의 사랑은 조건 없는 사랑입니다.\n\n[요한복음 3:16] — 독생자를 주실 만큼 크신 사랑\n[로마서 5:8] — 우리가 죄인이었을 때에도 사랑하신 하나님\n\n▶ 적용\n이 사랑을 받은 자로서 이웃을 사랑하는 삶을 살겠습니다.',
    tags:['사랑','구원','영생'],
    verses:[{id:'v1',ref:'John 3:16',text:'For God so loved the world, that he gave his only begotten Son...',koText:'하나님이 세상을 이처럼 사랑하사 독생자를 주셨으니 이는 그를 믿는 자마다 멸망하지 않고 영생을 얻게 하려 하심이라.'}],
    likes:5,views:12,comments:[{id:'c1',author:'성도1',text:'은혜로운 말씀 감사합니다!',ts:'2026-04-05T10:00:00Z'}]},
-  {id:'s2',title:'믿음으로 사는 삶',date:'2026-04-01',church:'새벽별교회',mainScripture:'히브리서 11:1',
+  {id:'s2',title:'믿음으로 사는 삶',date:'2026-04-01',church:'부산제일교회',mainScripture:'히브리서 11:1',
    summary:'믿음은 바라는 것들의 실상이요 보이지 않는 것들의 증거니.',
    content:'히브리서 11장 묵상.',tags:['믿음','히브리서'],
    verses:[{id:'v2',ref:'Hebrews 11:1',text:'Now faith is the substance of things hoped for...',koText:'믿음은 바라는 것들의 실상이요 보이지 않는 것들의 증거니'}],
@@ -488,11 +516,23 @@ function App(){
   const [sel,setSel]=useState(null);const [editT,setEditT]=useState(null);
   const [q,setQ]=useState('');const [svr,setSvr]=useState(null);const [ld,setLd]=useState(true);
   const [expOpen,setExpOpen]=useState(false);
+  const [settingsOpen,setSettingsOpen]=useState(false);
+  const [dfltChurch,setDfltChurch]=useState('부산제일교회');
+  const [churchInput,setChurchInput]=useState('부산제일교회');
 
   useEffect(()=>{
     fetch(API+'/health').then(r=>r.ok?setSvr(true):setSvr(false)).catch(()=>setSvr(false));
     setLd(true);apiG('/notes').then(d=>setNotes(d)).catch(()=>setNotes(INIT)).finally(()=>setLd(false));
+    // 설정 불러오기
+    apiG('/settings').then(s=>{if(s.defaultChurch){setDfltChurch(s.defaultChurch);setChurchInput(s.defaultChurch);}}).catch(()=>{});
   },[]);
+
+  const saveSettings=async()=>{
+    const val=churchInput.trim()||'부산제일교회';
+    setDfltChurch(val);
+    try{await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultChurch:val})});}catch{}
+    setSettingsOpen(false);
+  };
 
   const saveNote=async form=>{
     try{
@@ -529,7 +569,7 @@ function App(){
   };
 
   return<div style={{minHeight:'100vh',background:'var(--cr)'}}>
-    <header className="np" style={{background:'var(--bm)',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 8px rgba(0,0,0,.25)'}}>
+    <header className="np" style={{background:'#7C4A28',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 8px rgba(0,0,0,.25)'}}>
       <div style={{maxWidth:'900px',margin:'0 auto',padding:'11px 16px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
         <div style={{display:'flex',alignItems:'center',gap:'9px',cursor:'pointer'}} onClick={()=>{setView('list');setSel(null);setEditT(null);}}>
           <div style={{width:'34px',height:'34px',background:'rgba(255,255,255,.2)',borderRadius:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px'}}>📖</div>
@@ -541,10 +581,11 @@ function App(){
             </div>
           </div>
         </div>
-        {view==='list'&&<div style={{display:'flex',gap:'7px'}}>
-          <button onClick={()=>setExpOpen(true)} style={{color:'rgba(255,255,255,.8)',fontSize:'13px',fontWeight:600,padding:'7px 12px',borderRadius:'8px',background:'rgba(255,255,255,.15)',border:'none',cursor:'pointer'}}>📤 내보내기</button>
-          <button onClick={()=>{setEditT(null);setView('editor');}} style={{background:'var(--am)',color:'#fff',fontWeight:700,padding:'8px 15px',borderRadius:'9px',fontSize:'13px',border:'none',cursor:'pointer'}}>+ 새 노트</button>
-        </div>}
+        <div style={{display:'flex',gap:'7px'}}>
+          <button onClick={()=>{setChurchInput(dfltChurch);setSettingsOpen(true);}} style={{color:'rgba(255,255,255,.7)',fontSize:'13px',padding:'7px 10px',borderRadius:'8px',background:'rgba(255,255,255,.12)',border:'none',cursor:'pointer'}} title="설정">⚙️</button>
+          {view==='list'&&<><button onClick={()=>setExpOpen(true)} style={{color:'rgba(255,255,255,.8)',fontSize:'13px',fontWeight:600,padding:'7px 12px',borderRadius:'8px',background:'rgba(255,255,255,.15)',border:'none',cursor:'pointer'}}>📤 내보내기</button>
+          <button onClick={()=>{setEditT(null);setView('editor');}} style={{background:'var(--am)',color:'#fff',fontWeight:700,padding:'8px 15px',borderRadius:'9px',fontSize:'13px',border:'none',cursor:'pointer'}}>+ 새 노트</button></>}
+        </div>
       </div>
     </header>
 
@@ -574,13 +615,32 @@ function App(){
         )}
       </div>}
 
-      {view==='editor'&&<NoteEditor initial={editT} onSave={saveNote} onCancel={()=>{setView(sel&&editT?'detail':'list');setEditT(null);}}/>}
+      {view==='editor'&&<NoteEditor initial={editT} onSave={saveNote} onCancel={()=>{setView(sel&&editT?'detail':'list');setEditT(null);}} dfltChurch={dfltChurch}/>}
       {view==='detail'&&sel&&<NoteDetail
         note={notes.find(n=>n.id===sel.id)||sel} all={notes}
         onEdit={n=>{setEditT(n);setView('editor');}}
         onClose={()=>{setView('list');setSel(null);}}
         onLike={likeNote} onComment={addCmt} onDelete={delNote}/>}
     </main>
+
+    {/* 설정 모달 */}
+    {settingsOpen&&<div className="mo" onClick={()=>setSettingsOpen(false)}>
+      <div className="mb" style={{maxWidth:'400px'}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}}>
+          <h3 style={{fontSize:'17px',fontWeight:800,color:'var(--bd)'}}>⚙️ 설정</h3>
+          <button onClick={()=>setSettingsOpen(false)} style={{fontSize:'22px',color:'#9a7a60',background:'none',border:'none',cursor:'pointer'}}>×</button>
+        </div>
+        <div style={{marginBottom:'16px'}}>
+          <label style={{display:'block',fontSize:'13px',fontWeight:700,color:'var(--bm)',marginBottom:'6px'}}>기본 교회명</label>
+          <input value={churchInput} onChange={e=>setChurchInput(e.target.value)} placeholder="부산제일교회" style={{fontSize:'15px'}}/>
+          <div style={{fontSize:'12px',color:'#9a7a60',marginTop:'5px'}}>새 노트 작성 시 자동으로 입력됩니다. 개별 노트에서 수정 가능합니다.</div>
+        </div>
+        <div style={{display:'flex',gap:'8px'}}>
+          <button onClick={saveSettings} className="bp" style={{flex:1,padding:'11px'}}>저장</button>
+          <button onClick={()=>setSettingsOpen(false)} className="bg" style={{padding:'11px 18px'}}>취소</button>
+        </div>
+      </div>
+    </div>}
 
     {expOpen&&<div className="mo" onClick={()=>setExpOpen(false)}>
       <div className="mb" onClick={e=>e.stopPropagation()}>
