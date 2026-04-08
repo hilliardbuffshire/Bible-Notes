@@ -64,7 +64,9 @@ async function fetchKo(ref){
     const r=await fetch(`https://getbible.net/v2/korean/${idx+1}/${m[1]}.json`);
     if(!r.ok)return'';
     const d=await r.json();
-    return(d.verses?.[parseInt(m[2])]?.verse||d.verses?.[parseInt(m[2])]?.text||'').trim();
+    // verses는 {"1":{verse:"..."}, "16":{verse:"..."}} 형태의 객체 — 문자열 키로 접근
+    const vk=String(parseInt(m[2]));
+    return(d.verses?.[vk]?.verse||d.verses?.[vk]?.text||'').trim();
   }catch{return'';}
 }
 
