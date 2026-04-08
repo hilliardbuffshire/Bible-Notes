@@ -253,28 +253,47 @@ app.get("/api/bible/korean", async (req, res) => {
   }
 });
 
-// ── 한국어 성경 프록시 (브라우저→서버→getbible.net) ──
+// ── 한국어 성경 프록시 (한국어·영어 책명 모두 처리) ──
+const ABBRS=['gen','exo','lev','num','deu','jos','jdg','rut','1sa','2sa','1ki','2ki','1ch','2ch','ezr','neh','est','job','psa','pro','ecc','sng','isa','jer','lam','eze','dan','hos','joe','amo','oba','jon','mic','nah','hab','zep','hag','zec','mal','mat','mar','luk','joh','act','rom','1co','2co','gal','eph','phi','col','1th','2th','1ti','2ti','tit','phm','heb','jas','1pe','2pe','1jo','2jo','3jo','jud','rev'];
 app.get("/api/bible/ko", async (req, res) => {
   const ref = (req.query.ref || '').trim();
-  let idx = -1, bookName = '';
+  let idx = -1, matchLen = 0;
+  // 한국어 책명
   for (let i = 0; i < KO_BOOKS.length; i++) {
-    if (ref.startsWith(KO_BOOKS[i])) { idx = i; bookName = KO_BOOKS[i]; break; }
+    if (ref.startsWith(KO_BOOKS[i])) { idx = i; matchLen = KO_BOOKS[i].length; break; }
+  }
+  // 영어 책명 (Proverbs, John, 1 Corinthians 등)
+  if (idx === -1) {
+    for (let i = 0; i < EN_SRV.length; i++) {
+      if (ref.toLowerCase().startsWith(EN_SRV[i].toLowerCase())) { idx = i; matchLen = EN_SRV[i].length; break; }
+    }
   }
   if (idx === -1) return res.json({ text: '' });
-  const rest = ref.slice(bookName.length).trim();
+  const rest = ref.slice(matchLen).trim();
   const m = rest.match(/(\d+):(\d+)/);
   if (!m) return res.json({ text: '' });
+  const chapter = m[1], verse = String(parseInt(m[2]));
+
+  // 1차: getbible.net
   try {
-    const url = `https://getbible.net/v2/korean/${idx + 1}/${m[1]}.json`;
-    const { status, body } = await fetchUrl(url);
-    if (status !== 200) return res.json({ text: '' });
-    const d = JSON.parse(body);
-    const vk = String(parseInt(m[2]));
-    const text = (d.verses?.[vk]?.verse || d.verses?.[vk]?.text || '').trim();
-    res.json({ text });
-  } catch (e) {
-    res.json({ text: '' });
-  }
+    const { status, body } = await fetchUrl(`https://getbible.net/v2/korean/${idx+1}/${chapter}.json`);
+    if (status === 200) {
+      const d = JSON.parse(body);
+      const text = (d.verses?.[verse]?.verse || d.verses?.[verse]?.text || '').trim();
+      if (text) return res.json({ text });
+    }
+  } catch {}
+
+  // 2차: ibibles.net fallback
+  try {
+    const { status: s2, body: b2 } = await fetchUrl(`https://ibibles.net/quote.php?kor-${ABBRS[idx]}/${chapter}:${verse}`);
+    if (s2 === 200 && b2) {
+      const text = b2.replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
+      if (text && text.length > 3) return res.json({ text });
+    }
+  } catch {}
+
+  res.json({ text: '' });
 });
 
 // 설정 API
