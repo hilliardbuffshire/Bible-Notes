@@ -207,6 +207,18 @@ app.delete("/api/notes/:noteId/comments/:commentId", (req, res) => {
   res.json({ success: true });
 });
 
+// 설정 API
+app.get("/api/settings", (req, res) => {
+  const data = loadData();
+  res.json(data.settings || { defaultChurch: '부산제일교회' });
+});
+app.put("/api/settings", (req, res) => {
+  const data = loadData();
+  data.settings = { ...(data.settings || {}), ...req.body };
+  saveData(data);
+  res.json(data.settings);
+});
+
 // 헬스체크
 app.get("/api/health", (req, res) => {
   const { notes } = loadData();
