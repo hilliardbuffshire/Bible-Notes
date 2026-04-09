@@ -32,6 +32,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const DATA_FILE = path.join(__dirname, "notes-data.json");
 
+// ── Supabase 설정 (환경변수) ──
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
+
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
@@ -39,23 +43,66 @@ app.use(express.json({ limit: "2mb" }));
 app.use(express.static(path.join(__dirname)));
 
 // ──────────────────────────────────────────────
-// 데이터 헬퍼 (JSON 파일 기반)
+// Supabase REST API 헬퍼
 // ──────────────────────────────────────────────
 
-function loadData() {
+function supabaseFetch(endpoint, method, body) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(endpoint, SUPABASE_URL);
+    const data = body ? JSON.stringify(body) : null;
+    const headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+    if (method === 'POST') headers['Prefer'] = 'resolution=merge-duplicates,return=representation';
+    if (data) headers['Content-Length'] = Buffer.byteLength(data);
+    const req = https.request(
+      { hostname: url.hostname, port: 443, path: url.pathname + url.search, method, headers },
+      (res) => { let result = ''; res.on('data', c => result += c); res.on('end', () => resolve({ status: res.statusCode, body: result })); }
+    );
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+// ──────────────────────────────────────────────
+// 데이터 헬퍼 (Supabase 우선, 없으면 JSON 파일)
+// ──────────────────────────────────────────────
+
+async function loadData() {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const { status, body } = await supabaseFetch('/rest/v1/app_data?id=eq.1&select=*', 'GET', null);
+      if (status === 200) {
+        const rows = JSON.parse(body);
+        if (rows.length > 0) return { notes: rows[0].notes || [], settings: rows[0].settings || {} };
+      }
+      // 최초 1회: 초기 데이터 삽입
+      const initial = { notes: getInitialNotes() };
+      await supabaseFetch('/rest/v1/app_data', 'POST', { id: 1, notes: initial.notes, settings: {} });
+      return initial;
+    } catch (e) { console.error('[SUPABASE loadData]', e.message); }
+  }
+  // 로컬 JSON 파일 폴백
   if (!fs.existsSync(DATA_FILE)) {
     const initial = { notes: getInitialNotes() };
     fs.writeFileSync(DATA_FILE, JSON.stringify(initial, null, 2), "utf-8");
     return initial;
   }
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-  } catch {
-    return { notes: [] };
-  }
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8")); }
+  catch { return { notes: [] }; }
 }
 
-function saveData(data) {
+async function saveData(data) {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      await supabaseFetch('/rest/v1/app_data', 'POST', { id: 1, notes: data.notes || [], settings: data.settings || {} });
+      return;
+    } catch (e) { console.error('[SUPABASE saveData]', e.message); }
+  }
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
 }
 
@@ -126,24 +173,24 @@ function getInitialNotes() {
 // ──────────────────────────────────────────────
 
 // GET /api/notes  — 전체 노트 목록
-app.get("/api/notes", (req, res) => {
-  const { notes } = loadData();
+app.get("/api/notes", async (req, res) => {
+  const { notes } = await loadData();
   res.json(notes);
 });
 
 // GET /api/notes/:id  — 단일 노트 (조회수 +1)
-app.get("/api/notes/:id", (req, res) => {
-  const data = loadData();
+app.get("/api/notes/:id", async (req, res) => {
+  const data = await loadData();
   const note = data.notes.find((n) => n.id === req.params.id);
   if (!note) return res.status(404).json({ error: "노트를 찾을 수 없습니다." });
   note.views = (note.views || 0) + 1;
-  saveData(data);
+  await saveData(data);
   res.json(note);
 });
 
 // POST /api/notes  — 노트 생성
-app.post("/api/notes", (req, res) => {
-  const data = loadData();
+app.post("/api/notes", async (req, res) => {
+  const data = await loadData();
   const newNote = {
     ...req.body,
     id: uid(),
@@ -154,54 +201,54 @@ app.post("/api/notes", (req, res) => {
     updatedAt: new Date().toISOString(),
   };
   data.notes.unshift(newNote);
-  saveData(data);
+  await saveData(data);
   console.log(`[CREATE] "${newNote.title}"`);
   res.status(201).json(newNote);
 });
 
 // PUT /api/notes/:id  — 노트 수정
-app.put("/api/notes/:id", (req, res) => {
-  const data = loadData();
+app.put("/api/notes/:id", async (req, res) => {
+  const data = await loadData();
   const idx = data.notes.findIndex((n) => n.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: "노트를 찾을 수 없습니다." });
   data.notes[idx] = {
     ...data.notes[idx],
     ...req.body,
-    id: req.params.id, // id 보존
-    comments: data.notes[idx].comments, // 댓글 보존
+    id: req.params.id,
+    comments: data.notes[idx].comments,
     views: data.notes[idx].views,
     likes: data.notes[idx].likes,
     updatedAt: new Date().toISOString(),
   };
-  saveData(data);
+  await saveData(data);
   console.log(`[UPDATE] "${data.notes[idx].title}"`);
   res.json(data.notes[idx]);
 });
 
 // DELETE /api/notes/:id  — 노트 삭제
-app.delete("/api/notes/:id", (req, res) => {
-  const data = loadData();
+app.delete("/api/notes/:id", async (req, res) => {
+  const data = await loadData();
   const note = data.notes.find((n) => n.id === req.params.id);
   if (!note) return res.status(404).json({ error: "노트를 찾을 수 없습니다." });
   data.notes = data.notes.filter((n) => n.id !== req.params.id);
-  saveData(data);
+  await saveData(data);
   console.log(`[DELETE] "${note.title}"`);
   res.json({ success: true });
 });
 
 // POST /api/notes/:id/like  — 좋아요
-app.post("/api/notes/:id/like", (req, res) => {
-  const data = loadData();
+app.post("/api/notes/:id/like", async (req, res) => {
+  const data = await loadData();
   const note = data.notes.find((n) => n.id === req.params.id);
   if (!note) return res.status(404).json({ error: "노트를 찾을 수 없습니다." });
   note.likes = (note.likes || 0) + 1;
-  saveData(data);
+  await saveData(data);
   res.json({ likes: note.likes });
 });
 
 // POST /api/notes/:id/comments  — 댓글 추가
-app.post("/api/notes/:id/comments", (req, res) => {
-  const data = loadData();
+app.post("/api/notes/:id/comments", async (req, res) => {
+  const data = await loadData();
   const note = data.notes.find((n) => n.id === req.params.id);
   if (!note) return res.status(404).json({ error: "노트를 찾을 수 없습니다." });
   const comment = {
@@ -211,19 +258,45 @@ app.post("/api/notes/:id/comments", (req, res) => {
     likes: 0,
   };
   note.comments = [...(note.comments || []), comment];
-  saveData(data);
+  await saveData(data);
   console.log(`[COMMENT] on "${note.title}" by ${comment.author}`);
   res.status(201).json(comment);
 });
 
 // DELETE /api/notes/:noteId/comments/:commentId  — 댓글 삭제
-app.delete("/api/notes/:noteId/comments/:commentId", (req, res) => {
-  const data = loadData();
+app.delete("/api/notes/:noteId/comments/:commentId", async (req, res) => {
+  const data = await loadData();
   const note = data.notes.find((n) => n.id === req.params.noteId);
   if (!note) return res.status(404).json({ error: "노트를 찾을 수 없습니다." });
   note.comments = note.comments.filter((c) => c.id !== req.params.commentId);
-  saveData(data);
+  await saveData(data);
   res.json({ success: true });
+});
+
+// POST /api/ai/summarize  — Groq AI 핵심 요약
+app.post("/api/ai/summarize", async (req, res) => {
+  const GROQ_KEY = process.env.GROQ_API_KEY;
+  if (!GROQ_KEY) return res.status(503).json({ error: 'GROQ_API_KEY 환경변수가 설정되지 않았습니다. Render 대시보드 → Environment 에서 추가해주세요.' });
+  const { content, title, mainScripture } = req.body;
+  if (!content && !title) return res.status(400).json({ error: '요약할 내용이 없습니다.' });
+  const prompt = `다음 성경 설교/묵상 노트의 핵심 내용을 2~3문장으로 간결하게 한국어로 요약해주세요. 요약 문장만 작성하고, 다른 설명이나 제목은 붙이지 마세요.\n\n제목: ${title||''}\n본문: ${mainScripture||''}\n\n내용:\n${content||''}`;
+  const reqBody = JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: prompt }], max_tokens: 300, temperature: 0.5 });
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const request = https.request({
+        hostname: 'api.groq.com', port: 443, path: '/openai/v1/chat/completions', method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(reqBody) }
+      }, (response) => { let d = ''; response.on('data', c => d += c); response.on('end', () => resolve({ status: response.statusCode, body: d })); });
+      request.on('error', reject);
+      request.write(reqBody);
+      request.end();
+    });
+    if (result.status !== 200) { console.error('[GROQ]', result.body); return res.status(500).json({ error: 'Groq API 오류 — API 키를 확인해주세요.' }); }
+    const data = JSON.parse(result.body);
+    const summary = (data.choices?.[0]?.message?.content || '').trim();
+    if (!summary) return res.status(500).json({ error: '요약 생성에 실패했습니다.' });
+    res.json({ summary });
+  } catch (e) { console.error('[GROQ]', e); res.status(500).json({ error: e.message }); }
 });
 
 // ── 한국어 성경 (GitHub CDN 캐시 방식) ──
@@ -301,28 +374,29 @@ app.get("/api/bible/ko", async (req, res) => {
 });
 
 // 설정 API
-app.get("/api/settings", (req, res) => {
-  const data = loadData();
+app.get("/api/settings", async (req, res) => {
+  const data = await loadData();
   res.json(data.settings || { defaultChurch: '부산제일교회' });
 });
-app.put("/api/settings", (req, res) => {
-  const data = loadData();
+app.put("/api/settings", async (req, res) => {
+  const data = await loadData();
   data.settings = { ...(data.settings || {}), ...req.body };
-  saveData(data);
+  await saveData(data);
   res.json(data.settings);
 });
 
 // 헬스체크
-app.get("/api/health", (req, res) => {
-  const { notes } = loadData();
-  res.json({ status: "ok", notes: notes.length, time: new Date().toISOString() });
+app.get("/api/health", async (req, res) => {
+  const { notes } = await loadData();
+  const storage = SUPABASE_URL && SUPABASE_KEY ? 'supabase' : 'local-json';
+  res.json({ status: "ok", notes: notes.length, storage, time: new Date().toISOString() });
 });
 
 // Excel 내보내기
 app.get("/api/export/excel", async (req, res) => {
   try {
     const ExcelJS = require("exceljs");
-    const { notes } = loadData();
+    const { notes } = await loadData();
     const wb = new ExcelJS.Workbook();
     wb.creator = "말씀 노트 플랫폼";
 
@@ -440,6 +514,16 @@ app.listen(PORT, () => {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   console.log(`📖  말씀 노트 API 서버 시작`);
   console.log(`🌐  http://localhost:${PORT}`);
-  console.log(`💾  데이터: ${DATA_FILE}`);
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    console.log(`☁️   저장소: Supabase (영구 보존)`);
+  } else {
+    console.log(`💾  저장소: 로컬 JSON (${DATA_FILE})`);
+    console.log(`⚠️   Render 배포 시 SUPABASE_URL, SUPABASE_KEY 환경변수를 설정하세요!`);
+  }
+  if (process.env.GROQ_API_KEY) {
+    console.log(`✨  Groq AI 요약: 활성화`);
+  } else {
+    console.log(`💡  Groq AI 요약: 비활성화 (GROQ_API_KEY 환경변수 필요)`);
+  }
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 });
