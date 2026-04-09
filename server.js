@@ -229,27 +229,33 @@ app.delete("/api/notes/:noteId/comments/:commentId", (req, res) => {
 // ── 한국어 성경 (GitHub CDN 캐시 방식) ──
 const EN_SRV=['Genesis','Exodus','Leviticus','Numbers','Deuteronomy','Joshua','Judges','Ruth','1 Samuel','2 Samuel','1 Kings','2 Kings','1 Chronicles','2 Chronicles','Ezra','Nehemiah','Esther','Job','Psalms','Proverbs','Ecclesiastes','Song of Solomon','Isaiah','Jeremiah','Lamentations','Ezekiel','Daniel','Hosea','Joel','Amos','Obadiah','Jonah','Micah','Nahum','Habakkuk','Zephaniah','Haggai','Zechariah','Malachi','Matthew','Mark','Luke','John','Acts','Romans','1 Corinthians','2 Corinthians','Galatians','Ephesians','Philippians','Colossians','1 Thessalonians','2 Thessalonians','1 Timothy','2 Timothy','Titus','Philemon','Hebrews','James','1 Peter','2 Peter','1 John','2 John','3 John','Jude','Revelation'];
 
-// 서버 시작 시 한국어 성경 JSON 다운로드 후 메모리 캐시
+// 한국어 성경 — 로컬 파일 우선, 없으면 CDN 다운로드 후 저장
 let KO_DB = null;
+const KO_FILE = path.join(__dirname, 'ko-bible.json');
 (async () => {
-  const SRCS = [
-    'https://cdn.jsdelivr.net/gh/Bolderaysky/BibleAPI@master/ko.json',
-    'https://raw.githubusercontent.com/Bolderaysky/BibleAPI/master/ko.json',
-    'https://cdn.jsdelivr.net/gh/thiagobodruk/bible@master/json/ko_ko.json',
-    'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/ko_ko.json',
-  ];
-  for (const url of SRCS) {
+  // 1. 로컬 파일 (ko-bible.json)
+  if (fs.existsSync(KO_FILE)) {
     try {
-      const { status, body } = await fetchUrl(url);
-      if (status === 200) {
-        const d = JSON.parse(body);
-        if (Array.isArray(d) && d.length >= 66) {
-          KO_DB = d; console.log('✅ 한국어 성경 로드 완료:', url); break;
-        }
-      }
+      KO_DB = JSON.parse(fs.readFileSync(KO_FILE, 'utf8'));
+      console.log('✅ 한국어 성경 로컬 파일 로드 완료');
+      return;
     } catch {}
   }
-  if (!KO_DB) console.log('⚠️ 한국어 성경 캐시 로드 실패');
+  // 2. CDN 다운로드 후 로컬 저장
+  const CDN = 'https://cdn.jsdelivr.net/gh/thiagobodruk/bible@master/json/ko_ko.json';
+  try {
+    const { status, body } = await fetchUrl(CDN);
+    if (status === 200) {
+      const d = JSON.parse(body);
+      if (Array.isArray(d) && d.length >= 66) {
+        KO_DB = d;
+        try { fs.writeFileSync(KO_FILE, body, 'utf8'); } catch {}
+        console.log('✅ 한국어 성경 CDN 로드 및 저장 완료');
+        return;
+      }
+    }
+  } catch {}
+  console.log('⚠️ 한국어 성경 로드 실패');
 })();
 
 function lookupKo(bookIdx, ch, vs) {
