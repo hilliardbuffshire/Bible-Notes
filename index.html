@@ -290,7 +290,13 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
     },1200);
   },[form.content]);
 
-  const addTag=()=>{const t=tagIn.trim().replace(/^#/,'');if(t&&!form.tags.includes(t))set('tags',[...form.tags,t]);setTagIn('');};
+  const addTag=()=>{
+    const parts=tagIn.split(',').map(t=>t.trim().replace(/^#/,'')).filter(Boolean);
+    if(!parts.length)return;
+    const newTags=[...form.tags];
+    parts.forEach(t=>{if(t&&!newTags.includes(t))newTags.push(t);});
+    set('tags',newTags);setTagIn('');
+  };
   const rmTag=t=>set('tags',form.tags.filter(x=>x!==t));
   const addVerse=v=>set('verses',[...form.verses,{...v,id:uid()}]);
   const rmVerse=id=>set('verses',form.verses.filter(v=>v.id!==id));
@@ -379,7 +385,15 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
       <div>
         {L('태그')}
         <div style={{display:'flex',gap:'7px',marginBottom:'6px'}}>
-          <input value={tagIn} onChange={e=>setTagIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTag()} placeholder="#은혜 #기도 #사랑 (Enter로 추가)" style={{flex:1}}/>
+          <input value={tagIn} onChange={e=>{
+            const val=e.target.value;
+            if(val.includes(',')){
+              const parts=val.split(',');
+              const toAdd=parts.slice(0,-1).map(t=>t.trim().replace(/^#/,'')).filter(Boolean);
+              if(toAdd.length){const newTags=[...form.tags];toAdd.forEach(t=>{if(t&&!newTags.includes(t))newTags.push(t);});set('tags',newTags);}
+              setTagIn(parts[parts.length-1]);
+            }else{setTagIn(val);}
+          }} onKeyDown={e=>e.key==='Enter'&&addTag()} placeholder="사랑, 기도, 은혜 (콤마 또는 Enter로 즉시 추가)" style={{flex:1}}/>
           <button onClick={addTag} className="bg">추가</button>
         </div>
         <div>{form.tags.map(t=><span key={t} className="tag" style={{cursor:'pointer'}} onClick={()=>rmTag(t)}>#{t} ×</span>)}</div>
