@@ -21,9 +21,9 @@ function fetchUrl(url) {
         'Accept': 'application/json,*/*'
       }
     }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+      const chunks = [];
+      res.on('data', c => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
     }).on('error', reject);
   });
 }
@@ -60,7 +60,11 @@ function supabaseFetch(endpoint, method, body) {
     if (data) headers['Content-Length'] = Buffer.byteLength(data);
     const req = https.request(
       { hostname: url.hostname, port: 443, path: url.pathname + url.search, method, headers },
-      (res) => { let result = ''; res.on('data', c => result += c); res.on('end', () => resolve({ status: res.statusCode, body: result })); }
+      (res) => {
+        const chunks = [];
+        res.on('data', c => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      }
     );
     req.on('error', reject);
     if (data) req.write(data);
@@ -286,7 +290,11 @@ app.post("/api/ai/summarize", async (req, res) => {
       const request = https.request({
         hostname: 'api.groq.com', port: 443, path: '/openai/v1/chat/completions', method: 'POST',
         headers: { 'Authorization': 'Bearer ' + GROQ_KEY, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(reqBody) }
-      }, (response) => { let d = ''; response.on('data', c => d += c); response.on('end', () => resolve({ status: response.statusCode, body: d })); });
+      }, (response) => {
+        const chunks = [];
+        response.on('data', c => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+        response.on('end', () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      });
       request.on('error', reject);
       request.write(reqBody);
       request.end();
