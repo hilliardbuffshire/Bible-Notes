@@ -82,12 +82,40 @@ async function loadData() {
       const { status, body } = await supabaseFetch('/rest/v1/app_data?id=eq.1&select=*', 'GET', null);
       if (status === 200) {
         const rows = JSON.parse(body);
-        if (rows.length > 0) return { notes: rows[0].notes || [], settings: rows[0].settings || {} };
+        if (rows.length > 0) {
+          const sbNotes = rows[0].notes || [];
+          const sbSettings = rows[0].settings || {};
+          // ── 마이그레이션: Supabase에 노트가 비어있고 로컬 JSON에 데이터가 있으면 자동 이전 ──
+          if (sbNotes.length === 0 && fs.existsSync(DATA_FILE)) {
+            try {
+              const local = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+              const localNotes = local.notes || [];
+              if (localNotes.length > 0) {
+                console.log(`[MIGRATION] 로컬 노트 ${localNotes.length}개 → Supabase 이전 중...`);
+                await supabaseFetch('/rest/v1/app_data', 'POST', { id: 1, notes: localNotes, settings: local.settings || sbSettings });
+                console.log('[MIGRATION] 완료');
+                return { notes: localNotes, settings: local.settings || sbSettings };
+              }
+            } catch (me) { console.error('[MIGRATION ERROR]', me.message); }
+          }
+          return { notes: sbNotes, settings: sbSettings };
+        }
       }
-      // 최초 1회: 초기 데이터 삽입
-      const initial = { notes: getInitialNotes() };
-      await supabaseFetch('/rest/v1/app_data', 'POST', { id: 1, notes: initial.notes, settings: {} });
-      return initial;
+      // Supabase에 행 없음 → 로컬 데이터가 있으면 이전, 없으면 초기 데이터
+      let seedNotes = getInitialNotes();
+      let seedSettings = {};
+      if (fs.existsSync(DATA_FILE)) {
+        try {
+          const local = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+          if ((local.notes || []).length > 0) {
+            seedNotes = local.notes;
+            seedSettings = local.settings || {};
+            console.log(`[MIGRATION] 로컬 노트 ${seedNotes.length}개 → Supabase 최초 삽입`);
+          }
+        } catch {}
+      }
+      await supabaseFetch('/rest/v1/app_data', 'POST', { id: 1, notes: seedNotes, settings: seedSettings });
+      return { notes: seedNotes, settings: seedSettings };
     } catch (e) { console.error('[SUPABASE loadData]', e.message); }
   }
   // 로컬 JSON 파일 폴백
