@@ -47,7 +47,18 @@ const fT=s=>{if(!s)return'';const d=new Date(s);return`${d.getMonth()+1}/${d.get
 const parseScrs=s=>s?s.split('\n').filter(Boolean):[];
 const joinScrs=a=>a.join('\n');
 
-function parseRef(r){const t=r.trim();for(const k of KO){if(t.startsWith(k))return K2E[k]+' '+t.slice(k.length).trim();}return t;}
+function parseRef(r){
+  const t=r.trim();
+  // 범위 지원: "잠언 1:2~10" 또는 "잠언 1:2 ~ 10" → "Proverbs 1:2-10"
+  const rangeM=t.match(/^(.+\s+\d+:\d+)\s*[~～]\s*(\d+)$/);
+  if(rangeM){
+    const base=rangeM[1].trim(),endV=rangeM[2];
+    for(const k of KO){if(base.startsWith(k))return K2E[k]+' '+base.slice(k.length).trim()+'-'+endV;}
+    return base+'-'+endV;
+  }
+  for(const k of KO){if(t.startsWith(k))return K2E[k]+' '+t.slice(k.length).trim();}
+  return t;
+}
 
 async function fetchEn(ref,tr='kjv'){
   const r=await fetch(`https://bible-api.com/${encodeURIComponent(parseRef(ref))}?translation=${tr}`);
@@ -355,15 +366,24 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
     setScrIn('');
     const newScrs=[...scrs,val];
     set('mainScripture',joinScrs(newScrs));
-    // Auto-fetch EN + KO and add to citations
     const vId=uid();mvIds.current[val]=vId;
     setAddingKo(a=>({...a,[vId]:true}));
     try{
       const d=await fetchEn(val,'kjv');
-      const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
-      const koTxt=await fetchKo(val);
-      const vData={id:vId,ref:d.reference,text:enTxt,koText:koTxt};
-      setForm(f=>({...f,verses:[vData,...(f.verses||[]).filter(v=>v.id!==vId)]}));
+      // 범위 구절 (예: 잠언 1:2~10) → 각 절을 개별 VerseItem으로 추가
+      if(d.verses&&d.verses.length>1){
+        const limit=Math.min(d.verses.length,20);
+        const items=await Promise.all(d.verses.slice(0,limit).map(async vObj=>{
+          const vRef=`${vObj.bookname} ${vObj.chapter}:${vObj.verse}`;
+          const koTxt=await fetchKo(vRef).catch(()=>'');
+          return{id:uid(),ref:vRef,text:vObj.text.trim(),koText:koTxt};
+        }));
+        setForm(f=>({...f,verses:[...items,...(f.verses||[]).filter(v=>v.id!==vId)]}));
+      }else{
+        const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
+        const koTxt=await fetchKo(val);
+        setForm(f=>({...f,verses:[{id:vId,ref:d.reference,text:enTxt,koText:koTxt},...(f.verses||[]).filter(v=>v.id!==vId)]}));
+      }
     }catch{}
     setAddingKo(a=>{const n={...a};delete n[vId];return n;});
   };
@@ -385,11 +405,22 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
         const ok=KO.some(k=>ref.startsWith(k))||EN.some(e=>ref.toLowerCase().startsWith(e.toLowerCase()));
         if(ok&&!autoAdded.current.has(ref)&&!found.includes(ref))found.push(ref);
       }
-      // Pass 2: bookname ch:vs 직접 패턴 (한국어)
+      // Pass 2: bookname ch:vs 직접 패턴 (한국어) — "잠언 1:2"
       for(const k of KO){
         const re2=new RegExp(k+'\\s*(\\d+):(\\d+)','g');
         while((m=re2.exec(form.content))!==null){
           const ref=`${k} ${m[1]}:${m[2]}`;
+          if(!autoAdded.current.has(ref)&&!found.includes(ref))found.push(ref);
+        }
+      }
+      // Pass 3: bookname ch:vs~vs 범위 패턴 (한국어) — "잠언 1:2~10"
+      for(const k of KO){
+        const re3=new RegExp(k+'\\s*(\\d+):(\\d+)\\s*[~～]\\s*(\\d+)','g');
+        while((m=re3.exec(form.content))!==null){
+          const ref=`${k} ${m[1]}:${m[2]}~${m[3]}`;
+          // Pass2에서 잡힌 개별 절 중복 제거 (범위가 우선)
+          const singles=[];for(let v=parseInt(m[2]);v<=parseInt(m[3]);v++)singles.push(`${k} ${m[1]}:${v}`);
+          singles.forEach(s=>{const idx=found.indexOf(s);if(idx>-1)found.splice(idx,1);});
           if(!autoAdded.current.has(ref)&&!found.includes(ref))found.push(ref);
         }
       }
@@ -400,12 +431,28 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
         const vId=uid();
         try{
           const d=await fetchEn(ref,'kjv');
-          const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
-          const koTxt=await fetchKo(ref);
-          setForm(f=>{
-            if((f.verses||[]).some(v=>v.ref===d.reference||v.ref===ref))return f;
-            return{...f,verses:[...(f.verses||[]),{id:vId,ref:d.reference,text:enTxt,koText:koTxt}]};
-          });
+          // 범위 구절 (verses가 여러 개) 처리
+          if(d.verses&&d.verses.length>1){
+            const limit=Math.min(d.verses.length,20);
+            const items=await Promise.all(d.verses.slice(0,limit).map(async vObj=>{
+              const vRef=`${vObj.bookname} ${vObj.chapter}:${vObj.verse}`;
+              const koTxt=await fetchKo(vRef).catch(()=>'');
+              return{id:uid(),ref:vRef,text:vObj.text.trim(),koText:koTxt};
+            }));
+            setForm(f=>{
+              const existing=new Set((f.verses||[]).map(v=>v.ref));
+              const newItems=items.filter(it=>!existing.has(it.ref));
+              if(!newItems.length)return f;
+              return{...f,verses:[...(f.verses||[]),...newItems]};
+            });
+          }else{
+            const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
+            const koTxt=await fetchKo(ref);
+            setForm(f=>{
+              if((f.verses||[]).some(v=>v.ref===d.reference||v.ref===ref))return f;
+              return{...f,verses:[...(f.verses||[]),{id:vId,ref:d.reference,text:enTxt,koText:koTxt}]};
+            });
+          }
         }catch{
           setForm(f=>{
             if((f.verses||[]).some(v=>v.ref===ref))return f;
@@ -447,10 +494,10 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
 
       {/* 본문 성경구절 — 복수 입력 */}
       <div>
-        {L('본문 성경구절','여러 구절 추가 가능 — 자동으로 인용에 추가됨')}
+        {L('본문 성경구절','단일: 요한복음 3:16 / 범위: 잠언 1:2~10 — Enter 또는 추가 클릭')}
         <div style={{display:'flex',gap:'7px',marginBottom:'8px'}}>
           <input value={scrIn} onChange={e=>setScrIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addScr()}
-            placeholder="요한복음 3:16 입력 후 Enter 또는 추가 클릭" style={{flex:1}}/>
+            placeholder="예: 요한복음 3:16 또는 잠언 1:2~10 (범위)" style={{flex:1}}/>
           <button onClick={addScr} className="ba" style={{whiteSpace:'nowrap'}}>추가</button>
         </div>
         {Object.keys(addingKo).length>0&&<div style={{fontSize:'12px',color:'var(--am)',marginBottom:'6px'}}>⏳ 구절 불러오는 중...</div>}
@@ -467,7 +514,7 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
 
       {/* 노트 내용 */}
       <div>
-        {L('노트 내용','내용에서 [요한복음 3:16] 형식으로 쓰면 자동으로 인용에 추가 제안됨')}
+        {L('노트 내용','[요한복음 3:16] 또는 [잠언 1:2~10] 처럼 대괄호로 쓰면 자동 인용 추가')}
         <textarea value={form.content} onChange={e=>set('content',e.target.value)} rows={8} style={{resize:'vertical',fontSize:'15px',lineHeight:1.8}} placeholder="설교 내용, 묵상, 적용점, 기도 제목 등 자유롭게...&#10;&#10;구절 인용 예: [요한복음 3:16] 또는 [Romans 8:28]"/>
         {/* 자동 추가 진행 중 표시 */}
         {autoAddInfo&&<div style={{background:'#fff8e8',border:'1px solid #fde68a',borderRadius:'8px',padding:'8px 12px',marginTop:'6px',fontSize:'13px',color:'var(--am)',fontWeight:600}}>{autoAddInfo}</div>}
