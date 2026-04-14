@@ -183,12 +183,26 @@ function BibleGraph({notes}){
       (note.verses||[]).forEach(v=>{if(v.ref){const b=koBookOf(v.ref);if(b)bs.add(b);}});
       bs.forEach(b=>{bCnt[b]=(bCnt[b]||0)+1;if(!bNoteIds[b])bNoteIds[b]=[];bNoteIds[b].push(note.id);});
     });
+    // 엣지: 실제 교차인용(장:절 일치)된 노트 쌍의 책들 사이에만 선 생성
     const eMap={};
+    const seenPairs=new Set(); // 노트 쌍 중복 방지
     notes.forEach(note=>{
-      const bs=[];
-      parseScrs(note.mainScripture).forEach(s=>{const b=koBookOf(s);if(b&&!bs.includes(b))bs.push(b);});
-      (note.verses||[]).forEach(v=>{if(v.ref){const b=koBookOf(v.ref);if(b&&!bs.includes(b))bs.push(b);}});
-      for(let i=0;i<bs.length;i++)for(let j=i+1;j<bs.length;j++){const k=[bs[i],bs[j]].sort().join('||');eMap[k]=(eMap[k]||0)+1;}
+      const linked=xref(note,notes);
+      if(!linked.length)return;
+      const bs1=new Set();
+      parseScrs(note.mainScripture).forEach(s=>{const b=koBookOf(s);if(b)bs1.add(b);});
+      (note.verses||[]).forEach(v=>{if(v.ref){const b=koBookOf(v.ref);if(b)bs1.add(b);}});
+      linked.forEach(({note:n2})=>{
+        const pairKey=[note.id,n2.id].sort().join(':');
+        if(seenPairs.has(pairKey))return;
+        seenPairs.add(pairKey);
+        const bs2=new Set();
+        parseScrs(n2.mainScripture).forEach(s=>{const b=koBookOf(s);if(b)bs2.add(b);});
+        (n2.verses||[]).forEach(v=>{if(v.ref){const b=koBookOf(v.ref);if(b)bs2.add(b);}});
+        bs1.forEach(b1=>bs2.forEach(b2=>{
+          if(b1!==b2){const k=[b1,b2].sort().join('||');eMap[k]=(eMap[k]||0)+1;}
+        }));
+      });
     });
     const nodes=Object.keys(bCnt).map(b=>({id:b,count:bCnt[b],section:BIBLE_SECTIONS[b]||'Other',noteIds:bNoteIds[b]||[]}));
     const links=Object.entries(eMap).map(([k,w])=>{const[s,t]=k.split('||');return{source:s,target:t,weight:w};});
