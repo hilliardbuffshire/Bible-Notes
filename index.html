@@ -374,7 +374,11 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
       if(d.verses&&d.verses.length>1){
         const limit=Math.min(d.verses.length,20);
         const items=await Promise.all(d.verses.slice(0,limit).map(async vObj=>{
-          const vRef=`${vObj.bookname} ${vObj.chapter}:${vObj.verse}`;
+          // book_name (언더스코어) — bible-api.com 실제 필드명
+          const engB=vObj.book_name||vObj.bookname||'';
+          const engIdx=EN.findIndex(e=>e.toLowerCase()===engB.toLowerCase());
+          const koBook=engIdx>=0?KO[engIdx]:engB; // 한국어 책명으로 변환
+          const vRef=`${koBook} ${vObj.chapter}:${vObj.verse}`;
           const koTxt=await fetchKo(vRef).catch(()=>'');
           return{id:uid(),ref:vRef,text:vObj.text.trim(),koText:koTxt};
         }));
@@ -382,7 +386,9 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
       }else{
         const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
         const koTxt=await fetchKo(val);
-        setForm(f=>({...f,verses:[{id:vId,ref:d.reference,text:enTxt,koText:koTxt},...(f.verses||[]).filter(v=>v.id!==vId)]}));
+        // 사용자가 한국어로 입력했으면 한국어 ref 그대로 사용 (d.reference는 항상 영어로 옴)
+        const koRef=KO.some(k=>val.startsWith(k))?val:d.reference;
+        setForm(f=>({...f,verses:[{id:vId,ref:koRef,text:enTxt,koText:koTxt},...(f.verses||[]).filter(v=>v.id!==vId)]}));
       }
     }catch{}
     setAddingKo(a=>{const n={...a};delete n[vId];return n;});
@@ -435,7 +441,10 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
           if(d.verses&&d.verses.length>1){
             const limit=Math.min(d.verses.length,20);
             const items=await Promise.all(d.verses.slice(0,limit).map(async vObj=>{
-              const vRef=`${vObj.bookname} ${vObj.chapter}:${vObj.verse}`;
+              const engB=vObj.book_name||vObj.bookname||'';
+              const engIdx=EN.findIndex(e=>e.toLowerCase()===engB.toLowerCase());
+              const koBook=engIdx>=0?KO[engIdx]:engB;
+              const vRef=`${koBook} ${vObj.chapter}:${vObj.verse}`;
               const koTxt=await fetchKo(vRef).catch(()=>'');
               return{id:uid(),ref:vRef,text:vObj.text.trim(),koText:koTxt};
             }));
@@ -448,9 +457,11 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
           }else{
             const enTxt=(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim();
             const koTxt=await fetchKo(ref);
+            // 한국어로 감지된 ref를 그대로 사용 (d.reference는 영어)
+            const koRef=KO.some(k=>ref.startsWith(k))?ref:d.reference;
             setForm(f=>{
-              if((f.verses||[]).some(v=>v.ref===d.reference||v.ref===ref))return f;
-              return{...f,verses:[...(f.verses||[]),{id:vId,ref:d.reference,text:enTxt,koText:koTxt}]};
+              if((f.verses||[]).some(v=>v.ref===koRef||v.ref===ref))return f;
+              return{...f,verses:[...(f.verses||[]),{id:vId,ref:koRef,text:enTxt,koText:koTxt}]};
             });
           }
         }catch{
