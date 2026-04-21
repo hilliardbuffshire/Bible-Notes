@@ -204,10 +204,15 @@ function getInitialNotes() {
 // API Routes
 // ──────────────────────────────────────────────
 
-// GET /api/notes  — 전체 노트 목록
+// GET /api/notes  — 전체 노트 목록 (날짜 내림차순)
 app.get("/api/notes", async (req, res) => {
   const { notes } = await loadData();
-  res.json(notes);
+  const sorted = [...notes].sort((a, b) => {
+    const da = a.date ? new Date(a.date).getTime() : 0;
+    const db = b.date ? new Date(b.date).getTime() : 0;
+    return db - da;
+  });
+  res.json(sorted);
 });
 
 // GET /api/notes/:id  — 단일 노트 (조회수 +1)
@@ -367,13 +372,26 @@ const KO_FILE = path.join(__dirname, 'ko-bible.json');
   console.log('⚠️ 한국어 성경 로드 실패');
 })();
 
+function decodeHtmlEntities(str) {
+  if (!str) return str;
+  return str
+    .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
 function lookupKo(bookIdx, ch, vs) {
   if (!KO_DB || !KO_DB[bookIdx]) return '';
   const chapters = KO_DB[bookIdx].chapters || KO_DB[bookIdx];
   if (!Array.isArray(chapters)) return '';
   const chArr = chapters[ch - 1];
   if (!Array.isArray(chArr)) return '';
-  return (chArr[vs - 1] || '').toString().trim();
+  return decodeHtmlEntities((chArr[vs - 1] || '').toString().trim());
 }
 
 app.get("/api/bible/ko", async (req, res) => {
@@ -401,7 +419,7 @@ app.get("/api/bible/ko", async (req, res) => {
     const { status, body } = await fetchUrl(`https://getbible.net/v2/korean/${idx+1}/${m[1]}.json`);
     if (status === 200 && body.includes('"verses"') && !body.includes('Access denied')) {
       const d = JSON.parse(body);
-      const text = (d.verses?.[String(parseInt(m[2]))]?.verse || '').trim();
+      const text = decodeHtmlEntities((d.verses?.[String(parseInt(m[2]))]?.verse || '').trim());
       if (text) return res.json({ text });
     }
   } catch {}
