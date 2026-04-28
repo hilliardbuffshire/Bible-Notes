@@ -362,6 +362,7 @@ function BibleGraph({notes}){
     const nC=visNodes.map(n=>({...n}));
     const lC=visLinks.map(l=>({...l}));
     const sim=d3.forceSimulation(nC)
+      .alphaDecay(0.04).alphaMin(0.002)
       .force('link',d3.forceLink(lC).id(d=>d.id).distance(d=>Math.max(55,95-d.weight*8)).strength(0.28))
       .force('charge',d3.forceManyBody().strength(-240))
       .force('center',d3.forceCenter(W/2,H/2))
@@ -377,13 +378,12 @@ function BibleGraph({notes}){
       .attr('fill',d=>SEC_COLORS[d.section]||'#888')
       .attr('stroke','#fff').attr('stroke-width',2.5).attr('opacity',0.88).style('cursor','pointer')
       .on('mouseover',(e,d)=>{
-        d3.select(e.currentTarget).attr('opacity',1).attr('stroke-width',4).attr('r',r(d)*1.12);
+        d3.select(e.currentTarget).attr('opacity',1).attr('stroke','#fbbf24').attr('stroke-width',3.5);
         const rect=el.getBoundingClientRect();
-        // 해당 책을 인용한 노트 제목 목록
         const nTitles=notes.filter(n=>d.noteIds.includes(n.id)).map(n=>n.title);
         setTooltip({book:d.id,count:d.count,sec:SEC_LABELS[d.section]||d.section,titles:nTitles,px:e.clientX-rect.left,py:e.clientY-rect.top});
       })
-      .on('mouseout',(e,d)=>{d3.select(e.currentTarget).attr('opacity',0.88).attr('stroke-width',2.5).attr('r',r(d));setTooltip(null);})
+      .on('mouseout',(e,d)=>{d3.select(e.currentTarget).attr('opacity',0.88).attr('stroke','#fff').attr('stroke-width',2.5);setTooltip(null);})
       .on('click',(e,d)=>{setSelBook(b=>b===d.id?null:d.id);});
     node.append('text').text(d=>d.id)
       .attr('text-anchor','middle').attr('dy','0.35em')
@@ -953,13 +953,11 @@ const INIT=[
    summary:'하나님은 세상을 이처럼 사랑하사 독생자를 주셨으니, 믿는 자마다 멸망하지 않고 영생을 얻게 하려 하심이라.',
    content:'▶ 핵심 메시지\n하나님의 사랑은 조건 없는 사랑입니다.\n\n[요한복음 3:16] — 독생자를 주실 만큼 크신 사랑\n[로마서 5:8] — 우리가 죄인이었을 때에도 사랑하신 하나님\n\n▶ 적용\n이 사랑을 받은 자로서 이웃을 사랑하는 삶을 살겠습니다.',
    tags:['사랑','구원','영생'],
-   verses:[{id:'v1',ref:'John 3:16',text:'For God so loved the world, that he gave his only begotten Son...',koText:'하나님이 세상을 이처럼 사랑하사 독생자를 주셨으니 이는 그를 믿는 자마다 멸망하지 않고 영생을 얻게 하려 하심이라.'}],
-   likes:5,views:12,comments:[{id:'c1',author:'성도1',text:'은혜로운 말씀 감사합니다!',ts:'2026-04-05T10:00:00Z'}]},
+   verses:[{id:'v1',ref:'John 3:16',text:'For God so loved the world, that he gave his only begotten Son...',koText:'하나님이 세상을 이처럼 사랑하사 독생자를 주셨으니 이는 그를 믿는 자마다 멸망하지 않고 영생을 얻게 하려 하심이라.'}],views:12},
   {id:'s2',title:'믿음으로 사는 삶',date:'2026-04-01',church:'부산제일교회',mainScripture:'히브리서 11:1',
    summary:'믿음은 바라는 것들의 실상이요 보이지 않는 것들의 증거니.',
    content:'히브리서 11장 묵상.',tags:['믿음','히브리서'],
-   verses:[{id:'v2',ref:'Hebrews 11:1',text:'Now faith is the substance of things hoped for...',koText:'믿음은 바라는 것들의 실상이요 보이지 않는 것들의 증거니'}],
-   likes:3,views:8,comments:[]}
+   verses:[{id:'v2',ref:'Hebrews 11:1',text:'Now faith is the substance of things hoped for...',koText:'믿음은 바라는 것들의 실상이요 보이지 않는 것들의 증거니'}],views:8}
 ];
 
 // ── 메인 App ──
@@ -999,14 +997,6 @@ function App(){
     setView('list');setEditT(null);
   };
   const delNote=async id=>{try{await apiD(`/notes/${id}`);}catch{}setNotes(ns=>ns.filter(n=>n.id!==id));setView('list');setSel(null);};
-  const likeNote=async id=>{
-    try{const u=await apiP(`/notes/${id}/like`,{});setNotes(ns=>ns.map(n=>n.id===id?{...n,likes:u.likes}:n));}
-    catch{setNotes(ns=>ns.map(n=>n.id===id?{...n,likes:(n.likes||0)+1}:n));}
-  };
-  const addCmt=async(id,c)=>{
-    try{const u=await apiP(`/notes/${id}/comments`,c);setNotes(ns=>ns.map(n=>n.id===id?u:n));}
-    catch{setNotes(ns=>ns.map(n=>n.id===id?{...n,comments:[...(n.comments||[]),{...c,id:uid()}]}:n));}
-  };
   const openNote=n=>{
     const u={...n,views:(n.views||0)+1};setSel(u);setNotes(ns=>ns.map(x=>x.id===n.id?u:x));
     apiU(`/notes/${n.id}`,u).catch(()=>{});setView('detail');
