@@ -228,6 +228,36 @@ function CrossRefMap({note,all}){
         </div>
       </div>
 
+      {/* 큰 그림: 연결된 말씀 맥락 */}
+      {sel.citing.length>0&&(()=>{
+        const connRefs=[];
+        sel.citing.forEach(n=>parseScrs(n.mainScripture).forEach(s=>{if(s.trim())connRefs.push({ref:s.trim(),noteId:n.id,noteTitle:n.title});}));
+        const refCnt=connRefs.reduce((a,{ref})=>({...a,[ref]:(a[ref]||0)+1}),{});
+        const entries=Object.entries(refCnt).sort((a,b)=>b[1]-a[1]);
+        if(!entries.length)return null;
+        const books=[...new Set(entries.map(([r])=>koBookOf(r)).filter(Boolean))];
+        return<div style={{marginBottom:'14px'}}>
+          <div style={{fontSize:'11px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>🗺 큰 그림 — 이 구절이 인용된 말씀 맥락</div>
+          <div style={{padding:'12px 14px',background:'linear-gradient(135deg,#fff8e8,#fff3e0)',borderRadius:'10px',border:'1px solid #fde68a'}}>
+            <div style={{fontSize:'12px',color:'#7b3f00',marginBottom:'10px',fontWeight:600,lineHeight:1.5}}>
+              <span style={{background:'#78350f',color:'#fff',borderRadius:'6px',padding:'2px 8px',marginRight:'6px',fontSize:'11px'}}>{sel.ref}</span>
+              이 구절은 아래 말씀을 공부할 때 함께 인용됐습니다
+            </div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:'6px',marginBottom:'8px'}}>
+              {entries.map(([ref,cnt])=>{
+                const book=koBookOf(ref);const sec=book?BIBLE_SECTIONS[book]:'Other';const col=SEC_COLORS[sec]||'#888';
+                return<span key={ref} style={{display:'inline-flex',alignItems:'center',gap:'4px',padding:'4px 10px',borderRadius:'20px',fontSize:'12px',fontWeight:700,background:col+'22',border:`1.5px solid ${col}66`,color:col,cursor:'default'}} title={`${cnt}개 노트에서 연결`}>
+                  📖 {ref}{cnt>1&&<span style={{background:col,color:'#fff',borderRadius:'9999px',padding:'0 5px',fontSize:'10px',fontWeight:800}}>{cnt}</span>}
+                </span>;
+              })}
+            </div>
+            <div style={{fontSize:'11px',color:'#9a7a60',borderTop:'1px solid #fde68a',paddingTop:'6px'}}>
+              연결된 성경책: {books.map((b,i)=>{const sec=BIBLE_SECTIONS[b]||'Other';return<span key={b} style={{color:SEC_COLORS[sec]||'#888',fontWeight:700}}>{i>0?', ':''}{b}</span>;})}
+            </div>
+          </div>
+        </div>;
+      })()}
+
       {/* 연관 키워드 클라우드 */}
       {Object.keys(sel.tagFreq).length>0&&<div style={{marginBottom:'14px'}}>
         <div style={{fontSize:'11px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>연관 맥락 키워드</div>
@@ -274,133 +304,241 @@ function CrossRefMap({note,all}){
   </div>;
 }
 
-// ── 성경 연결 지도 (D3 Force Graph) ──
+// ── 성경 연결 지도 (D3 Force Graph + 목록 뷰) ──
 function BibleGraph({notes}){
   const svgRef=useRef(null);
   const [tooltip,setTooltip]=useState(null);
   const [selBook,setSelBook]=useState(null);
-  const [filtNotes,setFiltNotes]=useState([]);
+  const [selSec,setSelSec]=useState(null);       // 섹션 필터
+  const [viewMode,setViewMode]=useState('graph'); // 'graph' | 'list'
+  const [expanded,setExpanded]=useState({});      // {bookName: bool}
 
-  const {nodes,links}=useMemo(()=>{
-    // 노드: 본문 성경구절(mainScripture)에 명시된 책만 집계
+  const {nodes,links,bNoteIds}=useMemo(()=>{
     const bCnt={},bNoteIds={};
     notes.forEach(note=>{
       const bs=new Set();
       parseScrs(note.mainScripture).forEach(s=>{const b=koBookOf(s);if(b)bs.add(b);});
       bs.forEach(b=>{bCnt[b]=(bCnt[b]||0)+1;if(!bNoteIds[b])bNoteIds[b]=[];bNoteIds[b].push(note.id);});
     });
-    // 엣지: 실제 교차인용(장:절 일치)된 노트 쌍의 mainScripture 책들 사이에만 선 생성
-    const eMap={};
-    const seenPairs=new Set();
+    const eMap={};const seenPairs=new Set();
     notes.forEach(note=>{
-      const linked=xref(note,notes);
-      if(!linked.length)return;
+      const linked=xref(note,notes);if(!linked.length)return;
       const ms1=new Set();
       parseScrs(note.mainScripture).forEach(s=>{const b=koBookOf(s);if(b)ms1.add(b);});
       if(!ms1.size)return;
       linked.forEach(({note:n2})=>{
         const pairKey=[note.id,n2.id].sort().join(':');
-        if(seenPairs.has(pairKey))return;
-        seenPairs.add(pairKey);
+        if(seenPairs.has(pairKey))return;seenPairs.add(pairKey);
         const ms2=new Set();
         parseScrs(n2.mainScripture).forEach(s=>{const b=koBookOf(s);if(b)ms2.add(b);});
         if(!ms2.size)return;
-        ms1.forEach(b1=>ms2.forEach(b2=>{
-          if(b1!==b2){const k=[b1,b2].sort().join('||');eMap[k]=(eMap[k]||0)+1;}
-        }));
+        ms1.forEach(b1=>ms2.forEach(b2=>{if(b1!==b2){const k=[b1,b2].sort().join('||');eMap[k]=(eMap[k]||0)+1;}}));
       });
     });
     const nodes=Object.keys(bCnt).map(b=>({id:b,count:bCnt[b],section:BIBLE_SECTIONS[b]||'Other',noteIds:bNoteIds[b]||[]}));
     const links=Object.entries(eMap).map(([k,w])=>{const[s,t]=k.split('||');return{source:s,target:t,weight:w};});
-    return{nodes,links};
+    return{nodes,links,bNoteIds};
   },[notes]);
 
+  // 섹션 필터 적용
+  const visNodes=selSec?nodes.filter(n=>n.section===selSec):nodes;
+  const visNodeIds=new Set(visNodes.map(n=>n.id));
+  const visLinks=links.filter(l=>{
+    const s=typeof l.source==='object'?l.source.id:l.source;
+    const t=typeof l.target==='object'?l.target.id:l.target;
+    return visNodeIds.has(s)&&visNodeIds.has(t);
+  });
+
   useEffect(()=>{
-    if(!svgRef.current||!nodes.length)return;
+    if(viewMode!=='graph'||!svgRef.current||!visNodes.length)return;
     const el=svgRef.current;
-    const W=el.clientWidth||700,H=500;
+    const W=el.clientWidth||700,H=480;
     d3.select(el).selectAll('*').remove();
     d3.select(el).attr('height',H);
-    const svg=d3.select(el);
-    const g=svg.append('g');
-    svg.call(d3.zoom().scaleExtent([0.25,4]).on('zoom',e=>g.attr('transform',e.transform)));
-    const maxC=Math.max(...nodes.map(n=>n.count),1);
-    const r=n=>5+Math.sqrt(n.count/maxC)*26;
-    const nodesCopy=nodes.map(n=>({...n}));
-    const linksCopy=links.map(l=>({...l}));
-    const sim=d3.forceSimulation(nodesCopy)
-      .force('link',d3.forceLink(linksCopy).id(d=>d.id).distance(d=>Math.max(60,100-d.weight*8)).strength(0.25))
-      .force('charge',d3.forceManyBody().strength(-220))
+    const svg=d3.select(el);const g=svg.append('g');
+    svg.call(d3.zoom().scaleExtent([0.2,5]).on('zoom',e=>g.attr('transform',e.transform)));
+    const maxC=Math.max(...visNodes.map(n=>n.count),1);
+    const r=n=>6+Math.sqrt(n.count/maxC)*28;
+    const nC=visNodes.map(n=>({...n}));
+    const lC=visLinks.map(l=>({...l}));
+    const sim=d3.forceSimulation(nC)
+      .force('link',d3.forceLink(lC).id(d=>d.id).distance(d=>Math.max(55,95-d.weight*8)).strength(0.28))
+      .force('charge',d3.forceManyBody().strength(-240))
       .force('center',d3.forceCenter(W/2,H/2))
-      .force('collision',d3.forceCollide().radius(d=>r(d)+6));
-    const link=g.append('g').attr('stroke-opacity',0.4).selectAll('line').data(linksCopy).join('line')
-      .attr('stroke','#c8a060').attr('stroke-width',d=>Math.min(d.weight*1.5,7));
-    const node=g.append('g').selectAll('g').data(nodesCopy).join('g')
+      .force('collision',d3.forceCollide().radius(d=>r(d)+7));
+    const link=g.append('g').attr('stroke-opacity',0.35).selectAll('line').data(lC).join('line')
+      .attr('stroke','#c8a060').attr('stroke-width',d=>Math.min(d.weight*1.5,8));
+    const node=g.append('g').selectAll('g').data(nC).join('g')
       .call(d3.drag()
         .on('start',(e,d)=>{if(!e.active)sim.alphaTarget(0.3).restart();d.fx=d.x;d.fy=d.y;})
         .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
         .on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
     node.append('circle').attr('r',d=>r(d))
       .attr('fill',d=>SEC_COLORS[d.section]||'#888')
-      .attr('stroke','#fff').attr('stroke-width',2.5).attr('opacity',0.88)
-      .style('cursor','pointer')
+      .attr('stroke','#fff').attr('stroke-width',2.5).attr('opacity',0.88).style('cursor','pointer')
       .on('mouseover',(e,d)=>{
-        d3.select(e.currentTarget).attr('opacity',1).attr('stroke-width',4);
+        d3.select(e.currentTarget).attr('opacity',1).attr('stroke-width',4).attr('r',r(d)*1.12);
         const rect=el.getBoundingClientRect();
-        setTooltip({book:d.id,count:d.count,sec:SEC_LABELS[d.section]||d.section,px:e.clientX-rect.left,py:e.clientY-rect.top});
+        // 해당 책을 인용한 노트 제목 목록
+        const nTitles=notes.filter(n=>d.noteIds.includes(n.id)).map(n=>n.title);
+        setTooltip({book:d.id,count:d.count,sec:SEC_LABELS[d.section]||d.section,titles:nTitles,px:e.clientX-rect.left,py:e.clientY-rect.top});
       })
-      .on('mouseout',(e)=>{d3.select(e.currentTarget).attr('opacity',0.88).attr('stroke-width',2.5);setTooltip(null);})
-      .on('click',(e,d)=>{
-        setSelBook(b=>b===d.id?null:d.id);
-        setFiltNotes(notes.filter(n=>d.noteIds.includes(n.id)));
-      });
-    node.append('text').text(d=>d.count>1||nodes.length<20?d.id:'')
+      .on('mouseout',(e,d)=>{d3.select(e.currentTarget).attr('opacity',0.88).attr('stroke-width',2.5).attr('r',r(d));setTooltip(null);})
+      .on('click',(e,d)=>{setSelBook(b=>b===d.id?null:d.id);});
+    node.append('text').text(d=>d.id)
       .attr('text-anchor','middle').attr('dy','0.35em')
-      .attr('font-size',d=>Math.max(9,Math.min(13,r(d)*0.65)))
+      .attr('font-size',d=>Math.max(8,Math.min(12,r(d)*0.6)))
       .attr('fill','#fff').attr('font-weight',700).attr('pointer-events','none');
     sim.on('tick',()=>{
       link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
       node.attr('transform',d=>`translate(${d.x},${d.y})`);
     });
     return()=>sim.stop();
-  },[nodes,links]);
+  },[visNodes,visLinks,viewMode]);
+
+  // 목록 뷰용 데이터: 섹션 → 책 → 노트
+  const listData=useMemo(()=>{
+    const secMap={};
+    visNodes.forEach(nd=>{
+      const sec=nd.section;
+      if(!secMap[sec])secMap[sec]={label:SEC_LABELS[sec]||sec,color:SEC_COLORS[sec]||'#888',books:[]};
+      const bookNotes=notes.filter(n=>nd.noteIds.includes(n.id));
+      // 각 노트에 대해 이 책과 교차인용된 구절 수집
+      const notesWithXref=bookNotes.map(n=>{
+        const sharedRefs=[];
+        const xlinked=xref(n,notes);
+        xlinked.forEach(({note:n2,shared})=>shared.forEach(s=>{
+          if(koBookOf(s)===nd.id&&!sharedRefs.includes(s))sharedRefs.push(s);
+        }));
+        return{...n,xrefRefs:sharedRefs};
+      });
+      secMap[sec].books.push({book:nd.id,count:nd.count,notes:notesWithXref});
+    });
+    return Object.entries(secMap).sort((a,b)=>b[1].books.reduce((s,x)=>s+x.count,0)-a[1].books.reduce((s,x)=>s+x.count,0));
+  },[visNodes,notes]);
+
+  const toggleBook=b=>setExpanded(e=>({...e,[b]:!e[b]}));
+
+  if(nodes.length===0)return<div className="fade" style={{textAlign:'center',padding:'60px',color:'#b08060'}}>
+    <div style={{fontSize:'44px',marginBottom:'12px'}}>📖</div>
+    <div style={{fontSize:'16px',fontWeight:700,marginBottom:'6px'}}>아직 인용 구절이 없습니다</div>
+    <div style={{fontSize:'14px'}}>노트에 성경 구절을 추가하면 연결 지도가 만들어집니다.</div>
+  </div>;
 
   return<div className="fade">
-    <h2 style={{fontSize:'20px',fontWeight:800,color:'var(--bd)',marginBottom:'4px'}}>🌐 성경 연결 지도</h2>
-    <p style={{fontSize:'13px',color:'#9a7a60',marginBottom:'10px'}}>모든 노트에서 인용된 성경책들의 연결 관계를 시각화합니다. 드래그로 노드를 이동하고, 스크롤로 확대/축소하고, 클릭하면 해당 책을 인용한 노트 목록을 볼 수 있습니다.</p>
-    <div style={{display:'flex',flexWrap:'wrap',gap:'5px',marginBottom:'10px'}}>
-      {Object.entries(SEC_LABELS).map(([k,v])=><span key={k} style={{background:SEC_COLORS[k],color:'#fff',fontSize:'11px',fontWeight:700,padding:'2px 9px',borderRadius:'9999px'}}>{v}</span>)}
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'8px',marginBottom:'12px'}}>
+      <div>
+        <h2 style={{fontSize:'20px',fontWeight:800,color:'var(--bd)',marginBottom:'2px'}}>🌐 성경 연결 지도</h2>
+        <p style={{fontSize:'12px',color:'#9a7a60'}}>{nodes.length}개 성경책 · {notes.length}개 노트 · {links.length}개 연결</p>
+      </div>
+      <div style={{display:'flex',gap:'6px'}}>
+        {['graph','list'].map(m=><button key={m} onClick={()=>setViewMode(m)} style={{padding:'6px 14px',borderRadius:'8px',fontSize:'13px',fontWeight:700,border:'none',cursor:'pointer',background:viewMode===m?'var(--bm)':'var(--cd)',color:viewMode===m?'#fff':'var(--wt)'}}>
+          {m==='graph'?'🫧 버블맵':'📋 목록'}
+        </button>)}
+      </div>
     </div>
-    {nodes.length===0?
-      <div style={{textAlign:'center',padding:'60px',color:'#b08060'}}>
-        <div style={{fontSize:'44px',marginBottom:'12px'}}>📖</div>
-        <div style={{fontSize:'16px',fontWeight:700,marginBottom:'6px'}}>아직 인용 구절이 없습니다</div>
-        <div style={{fontSize:'14px'}}>노트에 성경 구절을 추가하면 연결 지도가 만들어집니다.</div>
-      </div>:
-      <div style={{position:'relative'}}>
-        <svg ref={svgRef} style={{width:'100%',border:'1px solid var(--wb)',borderRadius:'14px',background:'#fffaf5',display:'block'}}/>
-        {tooltip&&<div style={{position:'absolute',top:tooltip.py+12,left:Math.min(tooltip.px+12,300),background:'rgba(40,15,0,.88)',color:'#fff',borderRadius:'9px',padding:'9px 13px',fontSize:'13px',pointerEvents:'none',zIndex:20,minWidth:'130px'}}>
-          <div style={{fontWeight:800,fontSize:'15px',marginBottom:'2px'}}>{tooltip.book}</div>
-          <div style={{opacity:.8,fontSize:'12px',marginBottom:'2px'}}>{tooltip.sec}</div>
-          <div style={{color:'#fbbf24',fontWeight:700}}>노트 {tooltip.count}개에서 인용</div>
-        </div>}
-      </div>
-    }
-    {selBook&&<div style={{marginTop:'16px'}}>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'10px'}}>
-        <div style={{fontWeight:800,color:'var(--bm)',fontSize:'15px'}}>📚 "{selBook}" 인용 노트 ({filtNotes.length}개)</div>
-        <button onClick={()=>setSelBook(null)} style={{color:'#9a7a60',background:'none',border:'none',cursor:'pointer',fontSize:'18px'}}>×</button>
-      </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'10px'}}>
-        {filtNotes.map(n=><div key={n.id} style={{background:'#fff',border:'1px solid var(--wb)',borderRadius:'12px',padding:'14px'}}>
-          <div style={{fontWeight:700,color:'var(--bd)',fontSize:'15px',marginBottom:'3px'}}>{n.title}</div>
-          <div style={{fontSize:'12px',color:'#9a7a60',marginBottom:'6px'}}>{fD(n.date)}{n.church&&` · ${n.church}`}</div>
-          {n.summary&&<div style={{fontSize:'13px',color:'#5a3a1a',lineHeight:1.6,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{n.summary}</div>}
-          {parseScrs(n.mainScripture).length>0&&<div style={{marginTop:'6px',display:'flex',flexWrap:'wrap',gap:'3px'}}>
-            {parseScrs(n.mainScripture).slice(0,3).map(s=><span key={s} style={{background:'#fff3e0',color:'#7b3f00',fontSize:'11px',borderRadius:'6px',padding:'1px 7px',border:'1px solid #ffd5a0'}}>📜 {s}</span>)}
-          </div>}
+
+    {/* 섹션 필터 칩 */}
+    <div style={{display:'flex',flexWrap:'wrap',gap:'5px',marginBottom:'12px'}}>
+      <button onClick={()=>setSelSec(null)} style={{padding:'3px 10px',borderRadius:'9999px',fontSize:'11px',fontWeight:700,border:`1.5px solid ${selSec?'#ccc':'var(--bm)'}`,background:selSec?'#fff':'var(--bm)',color:selSec?'#9a7a60':'#fff',cursor:'pointer'}}>
+        전체
+      </button>
+      {Object.entries(SEC_LABELS).map(([k,v])=>{
+        const active=selSec===k;
+        return<button key={k} onClick={()=>setSelSec(s=>s===k?null:k)} style={{padding:'3px 10px',borderRadius:'9999px',fontSize:'11px',fontWeight:700,border:`1.5px solid ${SEC_COLORS[k]}`,background:active?SEC_COLORS[k]:'#fff',color:active?'#fff':SEC_COLORS[k],cursor:'pointer',transition:'all .15s'}}>
+          {v}
+        </button>;
+      })}
+    </div>
+
+    {/* 버블맵 뷰 */}
+    {viewMode==='graph'&&<div style={{position:'relative'}}>
+      <svg ref={svgRef} style={{width:'100%',border:'1px solid var(--wb)',borderRadius:'14px',background:'#fffaf5',display:'block'}}/>
+      {tooltip&&<div style={{position:'absolute',top:Math.min(tooltip.py+14,400),left:Math.min(tooltip.px+14,320),background:'rgba(30,10,0,.92)',color:'#fff',borderRadius:'10px',padding:'10px 14px',fontSize:'13px',pointerEvents:'none',zIndex:20,minWidth:'160px',maxWidth:'240px'}}>
+        <div style={{fontWeight:800,fontSize:'15px',marginBottom:'2px'}}>{tooltip.book}</div>
+        <div style={{opacity:.75,fontSize:'11px',marginBottom:'5px'}}>{tooltip.sec}</div>
+        <div style={{color:'#fbbf24',fontWeight:700,marginBottom:tooltip.titles.length?'6px':0}}>노트 {tooltip.count}개에서 인용</div>
+        {tooltip.titles.slice(0,4).map((t,i)=><div key={i} style={{fontSize:'11px',opacity:.85,lineHeight:1.5,paddingLeft:'6px',borderLeft:'2px solid #fbbf24',marginBottom:'2px'}}>
+          {t}
         </div>)}
-      </div>
+        {tooltip.titles.length>4&&<div style={{fontSize:'10px',opacity:.6}}>+{tooltip.titles.length-4}개 더...</div>}
+      </div>}
+      {selBook&&<div style={{marginTop:'14px',padding:'14px',background:'#fff',border:'1px solid var(--wb)',borderRadius:'12px'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'10px'}}>
+          <div style={{fontWeight:800,color:'var(--bm)',fontSize:'15px'}}>
+            <span style={{background:SEC_COLORS[BIBLE_SECTIONS[selBook]||'Other'],color:'#fff',borderRadius:'6px',padding:'2px 8px',marginRight:'6px',fontSize:'12px'}}>{SEC_LABELS[BIBLE_SECTIONS[selBook]||'Other']}</span>
+            📚 "{selBook}" 인용 노트 ({(bNoteIds[selBook]||[]).length}개)
+          </div>
+          <button onClick={()=>setSelBook(null)} style={{color:'#9a7a60',background:'none',border:'none',cursor:'pointer',fontSize:'20px'}}>×</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(270px,1fr))',gap:'8px'}}>
+          {notes.filter(n=>(bNoteIds[selBook]||[]).includes(n.id)).map(n=>{
+            const xlinked=xref(n,notes);
+            const sharedVia=[];
+            xlinked.forEach(({shared})=>shared.forEach(s=>{if(koBookOf(s)===selBook&&!sharedVia.includes(s))sharedVia.push(s);}));
+            return<div key={n.id} style={{background:'var(--cr)',border:'1px solid var(--wb)',borderRadius:'10px',padding:'12px'}}>
+              <div style={{fontWeight:700,color:'var(--bd)',fontSize:'14px',marginBottom:'2px'}}>{n.title}</div>
+              <div style={{fontSize:'11px',color:'#9a7a60',marginBottom:'6px'}}>{fD(n.date)}{n.church&&` · ${n.church}`}</div>
+              {parseScrs(n.mainScripture).length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'5px'}}>
+                {parseScrs(n.mainScripture).slice(0,3).map(s=><span key={s} style={{background:'#fff3e0',color:'#7b3f00',fontSize:'10px',borderRadius:'5px',padding:'1px 6px',border:'1px solid #ffd5a0'}}>📜 {s}</span>)}
+              </div>}
+              {sharedVia.length>0&&<div style={{fontSize:'10px',color:'var(--am)',fontWeight:700}}>🔗 교차인용: {sharedVia.join(', ')}</div>}
+            </div>;
+          })}
+        </div>
+      </div>}
+    </div>}
+
+    {/* 목록 뷰 */}
+    {viewMode==='list'&&<div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+      {listData.map(([secKey,{label,color,books}])=><div key={secKey} style={{border:`1.5px solid ${color}44`,borderRadius:'12px',overflow:'hidden'}}>
+        {/* 섹션 헤더 */}
+        <div style={{background:color,padding:'8px 14px',display:'flex',alignItems:'center',gap:'8px'}}>
+          <span style={{color:'#fff',fontWeight:800,fontSize:'13px'}}>{label}</span>
+          <span style={{background:'rgba(255,255,255,.25)',color:'#fff',borderRadius:'9999px',padding:'1px 8px',fontSize:'11px',fontWeight:700}}>{books.reduce((s,b)=>s+b.count,0)}개 노트</span>
+          <span style={{background:'rgba(255,255,255,.25)',color:'#fff',borderRadius:'9999px',padding:'1px 8px',fontSize:'11px'}}>{books.length}개 성경책</span>
+        </div>
+        {/* 책 목록 */}
+        <div style={{background:'#fff'}}>
+          {books.sort((a,b)=>b.count-a.count).map(({book,count,notes:bNotes})=>{
+            const isOpen=!!expanded[book];
+            return<div key={book} style={{borderTop:`1px solid ${color}22`}}>
+              {/* 책 행 */}
+              <div onClick={()=>toggleBook(book)} style={{display:'flex',alignItems:'center',gap:'10px',padding:'9px 14px',cursor:'pointer',background:isOpen?`${color}0d`:'transparent',transition:'background .15s'}}
+                onMouseEnter={e=>!isOpen&&(e.currentTarget.style.background=`${color}08`)}
+                onMouseLeave={e=>!isOpen&&(e.currentTarget.style.background='transparent')}>
+                <span style={{display:'inline-block',width:'10px',height:'10px',borderRadius:'50%',background:color,flexShrink:0}}/>
+                <span style={{fontWeight:700,fontSize:'14px',color:'var(--bd)',flex:1}}>{book}</span>
+                <span style={{fontSize:'11px',color:color,fontWeight:700,background:`${color}18`,padding:'2px 8px',borderRadius:'9999px'}}>{count}개 노트</span>
+                <span style={{fontSize:'14px',color:'#9a7a60',transition:'transform .2s',transform:isOpen?'rotate(90deg)':'none'}}>›</span>
+              </div>
+              {/* 펼쳐진 노트 목록 */}
+              {isOpen&&<div style={{padding:'0 14px 10px 14px',background:`${color}06`}}>
+                {bNotes.map(n=>{
+                  const xlinked=xref(n,notes);
+                  const sharedRefs=[];
+                  xlinked.forEach(({shared})=>shared.forEach(s=>{if(!sharedRefs.includes(s))sharedRefs.push(s);}));
+                  return<div key={n.id} style={{padding:'10px 12px',background:'#fff',borderRadius:'8px',marginBottom:'6px',border:`1px solid ${color}33`}}>
+                    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'8px',marginBottom:'4px'}}>
+                      <div style={{fontWeight:700,fontSize:'13px',color:'var(--bd)'}}>{n.title}</div>
+                      <div style={{fontSize:'10px',color:'#9a7a60',flexShrink:0,whiteSpace:'nowrap'}}>{fD(n.date)}</div>
+                    </div>
+                    {parseScrs(n.mainScripture).length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}}>
+                      {parseScrs(n.mainScripture).map(s=><span key={s} style={{background:'#fff3e0',color:'#7b3f00',fontSize:'10px',borderRadius:'5px',padding:'1px 6px',border:'1px solid #ffd5a0'}}>📜 {s}</span>)}
+                    </div>}
+                    {n.tags?.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}}>
+                      {n.tags.map(t=><span key={t} style={{background:`${color}18`,color:color,fontSize:'10px',borderRadius:'9999px',padding:'1px 6px'}}>#{t}</span>)}
+                    </div>}
+                    {sharedRefs.length>0&&<div style={{fontSize:'10px',color:'var(--am)',fontWeight:700,background:'#fff8e8',padding:'3px 8px',borderRadius:'5px',border:'1px solid #fde68a'}}>
+                      🔗 교차인용: {sharedRefs.join(' · ')}
+                    </div>}
+                  </div>;
+                })}
+              </div>}
+            </div>;
+          })}
+        </div>
+      </div>)}
     </div>}
   </div>;
 }
@@ -717,12 +855,11 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
 }
 
 // ── 노트 상세보기 ──
-function NoteDetail({note,all,onEdit,onClose,onLike,onComment,onDelete}){
-  const [cmt,setCmt]=useState('');const [auth,setAuth]=useState('');const [tab,setTab]=useState('content');
+function NoteDetail({note,all,onEdit,onClose,onDelete}){
+  const [tab,setTab]=useState('content');
   const linked=xref(note,all);
   const scrs=parseScrs(note.mainScripture);
   const vid=ytId(note.youtubeUrl);
-  const submitCmt=()=>{if(!cmt.trim())return;onComment(note.id,{author:auth||'익명',text:cmt,ts:new Date().toISOString()});setCmt('');setAuth('');};
   const Tab=(k,lbl)=><button key={k} onClick={()=>setTab(k)} className={tab===k?'tab-a':'tab-i'} style={{padding:'11px 15px',fontSize:'13px',whiteSpace:'nowrap',border:'none',cursor:'pointer',background:tab===k?'#fff':'transparent'}}>{lbl}</button>;
   return<div className="fade" style={{maxWidth:'700px',margin:'0 auto'}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'16px',flexWrap:'wrap',gap:'8px'}}>
@@ -747,7 +884,6 @@ function NoteDetail({note,all,onEdit,onClose,onLike,onComment,onDelete}){
         {Tab('content','📝 내용')}
         {Tab('verses',`📜 구절${note.verses?.length?` (${note.verses.length})`:''}`)}
         {Tab('xref',`🔗 교차인용${linked.length?` (${linked.length})`:''}`)}
-        {Tab('comments',`💬 댓글${note.comments?.length?` (${note.comments.length})`:''}`)}
       </div>
       <div style={{padding:'22px'}}>
         {tab==='content'&&<div>
@@ -767,11 +903,9 @@ function NoteDetail({note,all,onEdit,onClose,onLike,onComment,onDelete}){
             <div style={{lineHeight:1.9,whiteSpace:'pre-wrap',fontSize:'15px'}}>{note.content}</div>
           </div>}
           <div style={{display:'flex',alignItems:'center',gap:'16px',paddingTop:'12px',borderTop:'1px solid var(--wb)'}}>
-            <button onClick={()=>onLike(note.id)} style={{display:'flex',alignItems:'center',gap:'5px',background:'none',border:'none',cursor:'pointer',color:'#9a7a60'}}>
-              <span style={{fontSize:'17px'}}>{(note.likes||0)>0?'❤️':'🤍'}</span><span style={{fontSize:'14px',fontWeight:600}}>{note.likes||0}</span>
-            </button>
-            <span style={{fontSize:'13px',color:'#9a7a60'}}>👁 {note.views||0}</span>
-            <span style={{fontSize:'13px',color:'#9a7a60'}}>💬 {note.comments?.length||0}</span>
+            <span style={{fontSize:'13px',color:'#9a7a60'}}>👁 {note.views||0}회 조회</span>
+            <span style={{fontSize:'13px',color:'#9a7a60'}}>📜 구절 {note.verses?.length||0}개</span>
+            {linked.length>0&&<span style={{fontSize:'13px',color:'var(--am)',fontWeight:600}}>🔗 {linked.length}개 연결</span>}
           </div>
         </div>}
         {tab==='verses'&&(note.verses?.length?
@@ -781,25 +915,6 @@ function NoteDetail({note,all,onEdit,onClose,onLike,onComment,onDelete}){
           <div style={{textAlign:'center',padding:'32px',color:'#b08060',fontSize:'14px'}}>인용 구절이 없습니다.</div>
         )}
         {tab==='xref'&&<CrossRefMap note={note} all={all}/>}
-        {tab==='comments'&&<div>
-          <div style={{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'16px'}}>
-            {!note.comments?.length&&<div style={{textAlign:'center',padding:'24px',color:'#b08060',fontSize:'14px'}}>첫 번째 댓글을 남겨보세요!</div>}
-            {(note.comments||[]).map(c=><div key={c.id} style={{background:'var(--cr)',border:'1px solid var(--wb)',borderRadius:'10px',padding:'12px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
-                <span style={{fontWeight:700,fontSize:'14px'}}>{c.author}</span>
-                <span style={{fontSize:'12px',color:'#9a7a60'}}>{fT(c.ts||c.timestamp)}</span>
-              </div>
-              <div style={{fontSize:'14px',lineHeight:1.8}}>{c.text}</div>
-            </div>)}
-          </div>
-          <div style={{borderTop:'1px solid var(--wb)',paddingTop:'14px'}}>
-            <input value={auth} onChange={e=>setAuth(e.target.value)} placeholder="이름 (선택사항)" style={{marginBottom:'7px'}}/>
-            <div style={{display:'flex',gap:'7px'}}>
-              <textarea value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="댓글 입력..." rows={2} style={{flex:1,resize:'none',fontSize:'14px'}}/>
-              <button onClick={submitCmt} className="bp" style={{padding:'8px 14px',borderRadius:'10px'}}>전송</button>
-            </div>
-          </div>
-        </div>}
       </div>
     </div>
   </div>;
@@ -826,7 +941,6 @@ function NoteCard({note,all,onClick}){
     {note.summary&&<p style={{color:'#5a3a1a',fontSize:'14px',lineHeight:1.7,marginBottom:'9px',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{note.summary}</p>}
     <div style={{marginBottom:'8px'}}>{(note.tags||[]).slice(0,4).map(t=><span key={t} className="tag">#{t}</span>)}</div>
     <div style={{display:'flex',gap:'12px',fontSize:'12px',color:'#9a7a60',borderTop:'1px solid var(--cd)',paddingTop:'8px'}}>
-      <span>❤️ {note.likes||0}</span><span>💬 {note.comments?.length||0}</span>
       <span>📖 {note.verses?.length||0}구절</span>
       {linked.length>0&&<span style={{color:'var(--am)',fontWeight:600}}>🔗 {linked.length}개 연결</span>}
     </div>
@@ -970,7 +1084,7 @@ function App(){
         note={notes.find(n=>n.id===sel.id)||sel} all={notes}
         onEdit={n=>{setEditT(n);setView('editor');}}
         onClose={()=>{setView('list');setSel(null);}}
-        onLike={likeNote} onComment={addCmt} onDelete={delNote}/>}
+        onDelete={delNote}/>}
     </main>
 
     {/* 설정 모달 */}
