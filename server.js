@@ -410,9 +410,11 @@ app.get("/api/bible/ko", async (req, res) => {
   const m = rest.match(/(\d+):(\d+)/);
   if (!m) return res.json({ text: '' });
 
-  // 1차: 메모리 캐시 (개역개정 JSON)
+  // 1차: 메모리 캐시 (개역개정 JSON) — ◆ 또는 대체문자 포함 시 데이터 손상으로 판단해 fallback
   const cached = lookupKo(idx, parseInt(m[1]), parseInt(m[2]));
-  if (cached && cached.length > 2) return res.json({ text: cached });
+  if (cached && cached.length > 2 && !cached.includes('◆') && !cached.includes('�')) {
+    return res.json({ text: cached });
+  }
 
   // 2차: getbible.net (오류 응답 필터링)
   try {
