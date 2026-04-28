@@ -307,7 +307,7 @@ function CrossRefMap({note,all}){
 // ── 성경 연결 지도 (D3 Force Graph + 목록 뷰) ──
 function BibleGraph({notes}){
   const svgRef=useRef(null);
-  const [tooltip,setTooltip]=useState(null);
+  const tipRef=useRef(null);
   const [selBook,setSelBook]=useState(null);
   const [selSec,setSelSec]=useState(null);       // 섹션 필터
   const [viewMode,setViewMode]=useState('graph'); // 'graph' | 'list'
@@ -355,6 +355,16 @@ function BibleGraph({notes}){
     const W=el.clientWidth||700,H=480;
     d3.select(el).selectAll('*').remove();
     d3.select(el).attr('height',H);
+    // D3 전용 툴팁 (React state 없이 직접 DOM 조작 → 리렌더링 없음)
+    let tip=tipRef.current;
+    if(!tip){
+      tip=document.createElement('div');
+      Object.assign(tip.style,{position:'absolute',pointerEvents:'none',display:'none',
+        background:'rgba(30,10,0,.92)',color:'#fff',borderRadius:'10px',padding:'10px 14px',
+        fontSize:'13px',zIndex:'20',minWidth:'160px',maxWidth:'240px',lineHeight:'1.5'});
+      el.parentNode.appendChild(tip);
+      tipRef.current=tip;
+    }
     const svg=d3.select(el);const g=svg.append('g');
     svg.call(d3.zoom().scaleExtent([0.2,5]).on('zoom',e=>g.attr('transform',e.transform)));
     const maxC=Math.max(...visNodes.map(n=>n.count),1);
@@ -362,7 +372,7 @@ function BibleGraph({notes}){
     const nC=visNodes.map(n=>({...n}));
     const lC=visLinks.map(l=>({...l}));
     const sim=d3.forceSimulation(nC)
-      .alphaDecay(0.04).alphaMin(0.002)
+      .alphaDecay(0.05).alphaMin(0.003)
       .force('link',d3.forceLink(lC).id(d=>d.id).distance(d=>Math.max(55,95-d.weight*8)).strength(0.28))
       .force('charge',d3.forceManyBody().strength(-240))
       .force('center',d3.forceCenter(W/2,H/2))
@@ -381,10 +391,18 @@ function BibleGraph({notes}){
         d3.select(e.currentTarget).attr('opacity',1).attr('stroke','#fbbf24').attr('stroke-width',3.5);
         const rect=el.getBoundingClientRect();
         const nTitles=notes.filter(n=>d.noteIds.includes(n.id)).map(n=>n.title);
-        setTooltip({book:d.id,count:d.count,sec:SEC_LABELS[d.section]||d.section,titles:nTitles,px:e.clientX-rect.left,py:e.clientY-rect.top});
+        const titlesHtml=nTitles.slice(0,4).map(t=>`<div style="font-size:11px;opacity:.85;padding-left:6px;border-left:2px solid #fbbf24;margin-bottom:2px">${t}</div>`).join('')
+          +(nTitles.length>4?`<div style="font-size:10px;opacity:.6">+${nTitles.length-4}개 더...</div>`:'');
+        tip.innerHTML=`<div style="font-weight:800;font-size:15px;margin-bottom:2px">${d.id}</div>
+          <div style="opacity:.75;font-size:11px;margin-bottom:5px">${SEC_LABELS[d.section]||d.section}</div>
+          <div style="color:#fbbf24;font-weight:700;${nTitles.length?'margin-bottom:6px':''}">노트 ${d.count}개에서 인용</div>${titlesHtml}`;
+        const px=e.clientX-rect.left,py=e.clientY-rect.top;
+        tip.style.left=Math.min(px+14,W-180)+'px';
+        tip.style.top=Math.min(py+14,H-120)+'px';
+        tip.style.display='block';
       })
-      .on('mouseout',(e,d)=>{d3.select(e.currentTarget).attr('opacity',0.88).attr('stroke','#fff').attr('stroke-width',2.5);setTooltip(null);})
-      .on('click',(e,d)=>{setSelBook(b=>b===d.id?null:d.id);});
+      .on('mouseout',(e,d)=>{d3.select(e.currentTarget).attr('opacity',0.88).attr('stroke','#fff').attr('stroke-width',2.5);tip.style.display='none';})
+      .on('click',(e,d)=>{tip.style.display='none';setSelBook(b=>b===d.id?null:d.id);});
     node.append('text').text(d=>d.id)
       .attr('text-anchor','middle').attr('dy','0.35em')
       .attr('font-size',d=>Math.max(8,Math.min(12,r(d)*0.6)))
@@ -393,7 +411,7 @@ function BibleGraph({notes}){
       link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
       node.attr('transform',d=>`translate(${d.x},${d.y})`);
     });
-    return()=>sim.stop();
+    return()=>{sim.stop();tip.style.display='none';};
   },[visNodes,visLinks,viewMode]);
 
   // 목록 뷰용 데이터: 섹션 → 책 → 노트
@@ -454,15 +472,6 @@ function BibleGraph({notes}){
     {/* 버블맵 뷰 */}
     {viewMode==='graph'&&<div style={{position:'relative'}}>
       <svg ref={svgRef} style={{width:'100%',border:'1px solid var(--wb)',borderRadius:'14px',background:'#fffaf5',display:'block'}}/>
-      {tooltip&&<div style={{position:'absolute',top:Math.min(tooltip.py+14,400),left:Math.min(tooltip.px+14,320),background:'rgba(30,10,0,.92)',color:'#fff',borderRadius:'10px',padding:'10px 14px',fontSize:'13px',pointerEvents:'none',zIndex:20,minWidth:'160px',maxWidth:'240px'}}>
-        <div style={{fontWeight:800,fontSize:'15px',marginBottom:'2px'}}>{tooltip.book}</div>
-        <div style={{opacity:.75,fontSize:'11px',marginBottom:'5px'}}>{tooltip.sec}</div>
-        <div style={{color:'#fbbf24',fontWeight:700,marginBottom:tooltip.titles.length?'6px':0}}>노트 {tooltip.count}개에서 인용</div>
-        {tooltip.titles.slice(0,4).map((t,i)=><div key={i} style={{fontSize:'11px',opacity:.85,lineHeight:1.5,paddingLeft:'6px',borderLeft:'2px solid #fbbf24',marginBottom:'2px'}}>
-          {t}
-        </div>)}
-        {tooltip.titles.length>4&&<div style={{fontSize:'10px',opacity:.6}}>+{tooltip.titles.length-4}개 더...</div>}
-      </div>}
       {selBook&&<div style={{marginTop:'14px',padding:'14px',background:'#fff',border:'1px solid var(--wb)',borderRadius:'12px'}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'10px'}}>
           <div style={{fontWeight:800,color:'var(--bm)',fontSize:'15px'}}>
