@@ -1027,7 +1027,7 @@ function App(){
         <div style={{display:'flex',alignItems:'center',gap:'9px',cursor:'pointer'}} onClick={()=>{setView('list');setSel(null);setEditT(null);}}>
           <div style={{width:'34px',height:'34px',background:'rgba(255,255,255,.2)',borderRadius:'9px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px'}}>📖</div>
           <div>
-            <div style={{fontWeight:800,color:'#fff',fontSize:'15px'}}>말씀 노트</div>
+            <div style={{fontWeight:800,color:'#fff',fontSize:'15px',display:'flex',alignItems:'center',gap:'6px'}}>말씀 노트 <span style={{color:'#EF4444',fontSize:'22px',lineHeight:1,verticalAlign:'middle',textShadow:'0 1px 4px rgba(0,0,0,.3)'}}>✝</span></div>
             <div style={{fontSize:'10px',color:'rgba(255,255,255,.65)',display:'flex',alignItems:'center'}}>
               <span style={{display:'inline-block',width:'6px',height:'6px',borderRadius:'50%',background:svr===true?'#4ade80':svr===false?'#f87171':'#fbbf24',marginRight:'4px'}}></span>
               {svr===true?'서버 연결됨':svr===false?'오프라인 모드':'연결 확인 중'}
