@@ -150,17 +150,34 @@ async function apiP(p,b){const r=await fetch(API+p,{method:'POST',headers:{'Cont
 async function apiU(p,b){const r=await fetch(API+p,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});if(!r.ok)throw Error();return r.json();}
 async function apiD(p){const r=await fetch(API+p,{method:'DELETE'});if(!r.ok)throw Error();return r.json();}
 
-// ── 자주 인용된 구절 카드 (펼침/접힘 + 말씀 텍스트 + 키워드 + 맥락) ──
-function TopVerseCard({rank,verseRef,count,citingNotes,allNotes,maxCount}){
-  const [open,setOpen]=useState(false);
+// ── 말씀 인사이트 뷰 (좌: 구절 순위, 우: 상세 패널) ──
+function InsightsView({notes}){
+  const freqData=useMemo(()=>{
+    const freq={};
+    notes.forEach(n=>{
+      const refs=new Set([
+        ...parseScrs(n.mainScripture).filter(s=>/\d+:\d+/.test(s)).map(s=>s.trim()),
+        ...(n.verses||[]).filter(v=>v.ref&&/\d+:\d+/.test(v.ref)).map(v=>v.ref.trim())
+      ]);
+      refs.forEach(r=>{if(!freq[r])freq[r]={count:0,notes:[]};freq[r].count++;freq[r].notes.push(n);});
+    });
+    return Object.entries(freq).sort((a,b)=>b[1].count-a[1].count).slice(0,25);
+  },[notes]);
+
+  const [sel,setSel]=useState(()=>freqData[0]?.[0]||null);
   const [koText,setKoText]=useState('');
   const [enText,setEnText]=useState('');
   const [loading,setLoading]=useState(false);
 
+  const maxCount=freqData[0]?.[1]?.count||1;
+  const selEntry=freqData.find(([r])=>r===sel);
+  const selNotes=selEntry?.[1]?.notes||[];
+  const selCount=selEntry?.[1]?.count||0;
+
   useEffect(()=>{
-    if(!open)return;
-    // 먼저 기존 노트 verses 배열에서 텍스트 찾기
-    const found=allNotes.flatMap(n=>n.verses||[]).find(v=>v.ref&&v.ref.trim()===verseRef);
+    if(!sel)return;
+    setKoText('');setEnText('');
+    const found=notes.flatMap(n=>n.verses||[]).find(v=>v.ref?.trim()===sel);
     const ko=found?.koText?decHtml(found.koText):'';
     const en=found?.text||'';
     if(ko)setKoText(ko);
@@ -168,89 +185,129 @@ function TopVerseCard({rank,verseRef,count,citingNotes,allNotes,maxCount}){
     if(!ko||!en){
       setLoading(true);
       Promise.all([
-        ko?Promise.resolve(ko):fetchKo(verseRef).catch(()=>''),
-        en?Promise.resolve(en):fetchEn(verseRef,'kjv').then(d=>(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim()).catch(()=>'')
+        ko?Promise.resolve(ko):fetchKo(sel).catch(()=>''),
+        en?Promise.resolve(en):fetchEn(sel,'kjv').then(d=>(d.verses?d.verses.map(v=>v.text.trim()).join(' '):d.text||'').trim()).catch(()=>'')
       ]).then(([k,e])=>{if(k)setKoText(k);if(e)setEnText(e);}).finally(()=>setLoading(false));
     }
-  },[open]);
+  },[sel]);
 
-  const book=koBookOf(verseRef);
-  const sec=book?BIBLE_SECTIONS[book]:'Other';
-  const col=SEC_COLORS[sec]||'#888';
-  const tagFreq=citingNotes.flatMap(n=>n.tags||[]).reduce((a,t)=>({...a,[t]:(a[t]||0)+1}),{});
+  const tagFreq=selNotes.flatMap(n=>n.tags||[]).reduce((a,t)=>({...a,[t]:(a[t]||0)+1}),{});
   const maxTF=Math.max(1,...Object.values(tagFreq));
   const sortedTags=Object.entries(tagFreq).sort((a,b)=>b[1]-a[1]);
+  const selBook=koBookOf(sel||'');
+  const selSec=selBook?BIBLE_SECTIONS[selBook]:'Other';
+  const selCol=SEC_COLORS[selSec]||'#888';
 
-  return<div style={{borderRadius:'12px',border:`1.5px solid ${col}44`,overflow:'hidden',background:'#fff'}}>
-    {/* 헤더 — 항상 표시 */}
-    <div onClick={()=>setOpen(o=>!o)} style={{display:'flex',gap:'10px',alignItems:'center',padding:'13px 14px',cursor:'pointer',background:open?`${col}08`:'#fff',transition:'background .15s'}}>
-      <div style={{width:'28px',height:'28px',borderRadius:'50%',background:rank<=3?'#78350f':col,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'13px',fontWeight:800,flexShrink:0}}>{rank}</div>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap',marginBottom:'4px'}}>
-          <span style={{fontWeight:800,color:col,fontSize:'15px'}}>{verseRef}</span>
-          <span style={{background:col+'22',color:col,fontSize:'10px',fontWeight:700,borderRadius:'9999px',padding:'1px 8px',border:`1px solid ${col}44`}}>{SEC_LABELS[sec]||sec}</span>
-        </div>
-        <div style={{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}}>
-          <div style={{height:'6px',borderRadius:'3px',background:`linear-gradient(90deg,${col},${col}88)`,width:`${Math.max(16,(count/maxCount)*140)}px`}}/>
-          <span style={{fontSize:'12px',fontWeight:700,color:'#78350f'}}>{count}개 노트에서 인용</span>
-        </div>
-        {!open&&sortedTags.length>0&&<div style={{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'5px'}}>
-          {sortedTags.slice(0,4).map(([t,c])=><span key={t} style={{fontSize:'10px',background:col+'18',color:col,borderRadius:'9999px',padding:'1px 7px',border:`1px solid ${col}33`}}>#{t}{c>1?` ×${c}`:''}</span>)}
-          {sortedTags.length>4&&<span style={{fontSize:'10px',color:'#9a7a60'}}>+{sortedTags.length-4}</span>}
-        </div>}
-      </div>
-      <span style={{fontSize:'18px',color:'#9a7a60',transform:open?'rotate(90deg)':'none',transition:'transform .2s',flexShrink:0}}>›</span>
+  if(!freqData.length)return<div className="fade" style={{textAlign:'center',padding:'80px',color:'#b08060'}}>
+    <div style={{fontSize:'44px',marginBottom:'12px'}}>📊</div>
+    <div style={{fontSize:'16px',fontWeight:700}}>인용 구절이 없습니다</div>
+    <div style={{fontSize:'13px',marginTop:'6px'}}>노트에 성경 구절을 추가하면 인사이트가 생성됩니다.</div>
+  </div>;
+
+  return<div className="fade">
+    <div style={{marginBottom:'14px'}}>
+      <h2 style={{fontSize:'20px',fontWeight:800,color:'var(--bd)',marginBottom:'2px'}}>📊 말씀 인사이트</h2>
+      <p style={{fontSize:'12px',color:'#9a7a60'}}>{freqData.length}개 구절 분석 · {notes.length}개 노트 — 왼쪽에서 구절을 선택하면 상세 분석이 오른쪽에 표시됩니다</p>
     </div>
 
-    {/* 펼쳐진 상세 */}
-    {open&&<div style={{padding:'0 14px 16px',borderTop:`1px solid ${col}22`}}>
-      {/* 말씀 텍스트 */}
-      <div style={{background:'linear-gradient(135deg,#fffbeb,#fff8f0)',borderRadius:'10px',padding:'14px',margin:'14px 0',border:`1px solid ${col}22`}}>
-        {loading?<div style={{fontSize:'13px',color:'var(--am)',textAlign:'center',padding:'6px'}}>⏳ 말씀 불러오는 중...</div>:<>
-          {koText&&<div style={{marginBottom:enText?'10px':0}}>
-            <div style={{fontSize:'10px',fontWeight:700,color:'#059669',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'5px'}}>🇰🇷 개역개정</div>
-            <div style={{fontSize:'15px',color:'#065f46',lineHeight:1.9,fontWeight:600}}>{koText}</div>
-          </div>}
-          {enText&&<div style={{borderTop:koText?'1px solid #d1fae5':'none',paddingTop:koText?'10px':0}}>
-            <div style={{fontSize:'10px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'5px'}}>KJV</div>
-            <div style={{fontSize:'13px',color:'#4a2c10',lineHeight:1.85,fontStyle:'italic'}}>{enText}</div>
-          </div>}
-          {!koText&&!enText&&<div style={{fontSize:'13px',color:'#9a7a60',textAlign:'center',padding:'4px'}}>말씀 텍스트를 불러올 수 없습니다</div>}
-        </>}
-      </div>
-
-      {/* 연관 키워드 클라우드 */}
-      {sortedTags.length>0&&<div style={{marginBottom:'14px'}}>
-        <div style={{fontSize:'11px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>연관 키워드</div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:'6px',padding:'10px 12px',background:'#fffbeb',borderRadius:'10px',border:'1px solid #fde68a'}}>
-          {sortedTags.map(([tag,cnt])=>{const r=cnt/maxTF;return<span key={tag} title={`${cnt}개 노트`} style={{padding:'4px 11px',borderRadius:'20px',fontWeight:700,cursor:'default',fontSize:`${0.65+r*0.3}rem`,background:`rgba(120,53,15,${0.07+r*0.13})`,border:`1px solid rgba(180,83,9,${0.18+r*0.28})`,color:`rgba(120,53,15,${0.55+r*0.45})`}}>#{tag}{cnt>1&&<span style={{opacity:.6,fontSize:'.8em',fontWeight:400}}>×{cnt}</span>}</span>;})}
+    <div style={{display:'flex',flexWrap:'wrap',gap:'14px',alignItems:'start'}}>
+      {/* ── 왼쪽: 구절 순위 목록 ── */}
+      <div style={{flex:'0 0 240px',minWidth:'200px',background:'#fff',borderRadius:'14px',border:'1px solid var(--wb)',overflow:'hidden'}}>
+        <div style={{padding:'11px 14px',borderBottom:'1px solid var(--wb)',background:'var(--cr)',fontSize:'11px',fontWeight:800,color:'var(--bm)',textTransform:'uppercase',letterSpacing:'0.5px'}}>
+          인용 순위 TOP {freqData.length}
         </div>
-      </div>}
-
-      {/* 인용 맥락 — 각 노트별 */}
-      <div>
-        <div style={{fontSize:'11px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>인용 맥락 ({citingNotes.length}개 노트)</div>
-        <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
-          {citingNotes.map(n=>{
-            const connRefs=parseScrs(n.mainScripture).filter(s=>s.trim()!==verseRef&&/\d+:\d+/.test(s));
-            return<div key={n.id} style={{background:'linear-gradient(135deg,#fffbeb,#fff8f0)',borderRadius:'10px',padding:'12px 13px',border:`1px solid ${col}33`}}>
-              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'8px',marginBottom:'5px'}}>
-                <div style={{fontWeight:800,fontSize:'13px',color:'#78350f'}}>{n.title}</div>
-                <div style={{fontSize:'11px',color:'#92400e',background:'#fef3c7',padding:'2px 8px',borderRadius:'20px',flexShrink:0,whiteSpace:'nowrap'}}>{fD(n.date)}</div>
+        <div style={{overflowY:'auto',maxHeight:'72vh'}}>
+          {freqData.map(([ref,{count}],i)=>{
+            const bk=koBookOf(ref);const sc=bk?BIBLE_SECTIONS[bk]:'Other';const col=SEC_COLORS[sc]||'#888';
+            const active=sel===ref;
+            return<div key={ref} onClick={()=>setSel(ref)} style={{display:'flex',gap:'9px',alignItems:'center',padding:'10px 14px',cursor:'pointer',background:active?col+'18':'transparent',borderLeft:`3px solid ${active?col:'transparent'}`,transition:'all .12s'}}>
+              <div style={{width:'21px',height:'21px',borderRadius:'50%',background:i<3?'#78350f':col,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'10px',fontWeight:800,flexShrink:0}}>{i+1}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:800,color:active?col:'var(--bd)',fontSize:'13px',marginBottom:'3px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ref}</div>
+                <div style={{display:'flex',alignItems:'center',gap:'4px'}}>
+                  <div style={{height:'4px',borderRadius:'2px',background:active?col:col+'88',width:`${Math.max(10,(count/maxCount)*70)}px`,transition:'width .2s'}}/>
+                  <span style={{fontSize:'10px',color:'#9a7a60',flexShrink:0}}>{count}개</span>
+                </div>
               </div>
-              {n.summary&&<div style={{fontSize:'12px',color:'#5a3a1a',lineHeight:1.7,marginBottom:'6px',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{n.summary}</div>}
-              {connRefs.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}}>
-                {connRefs.slice(0,4).map(s=>{const bk=koBookOf(s);const sc=bk?BIBLE_SECTIONS[bk]:'Other';const c2=SEC_COLORS[sc]||'#888';return<span key={s} style={{fontSize:'10px',background:c2+'18',color:c2,borderRadius:'5px',padding:'1px 7px',border:`1px solid ${c2}33`,fontWeight:600}}>📖 {s}</span>;})}
-                {connRefs.length>4&&<span style={{fontSize:'10px',color:'#9a7a60'}}>+{connRefs.length-4}</span>}
-              </div>}
-              {n.tags?.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'3px'}}>
-                {n.tags.slice(0,5).map(t=><span key={t} style={{fontSize:'10px',background:'#fff',border:'1px solid #fde68a',color:'#7b3f00',borderRadius:'9999px',padding:'1px 7px'}}>#{t}</span>)}
-              </div>}
+              <span style={{background:col+'22',color:col,fontSize:'9px',fontWeight:700,borderRadius:'9999px',padding:'1px 5px',border:`1px solid ${col}33`,flexShrink:0,whiteSpace:'nowrap'}}>{SEC_LABELS[sc]||sc}</span>
             </div>;
           })}
         </div>
       </div>
-    </div>}
+
+      {/* ── 오른쪽: 선택 구절 상세 패널 ── */}
+      <div style={{flex:1,minWidth:'260px',display:'flex',flexDirection:'column',gap:'12px'}}>
+        {sel&&selEntry?<>
+          {/* 구절 헤더 배너 */}
+          <div style={{background:`linear-gradient(135deg,${selCol}dd,${selCol}aa)`,borderRadius:'14px',padding:'20px 22px',color:'#fff'}}>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:'10px',marginBottom:'12px'}}>
+              <div>
+                <div style={{fontSize:'11px',opacity:.75,marginBottom:'4px',textTransform:'uppercase',letterSpacing:'0.5px'}}>{SEC_LABELS[selSec]||selSec}</div>
+                <div style={{fontSize:'26px',fontWeight:900,lineHeight:1.1}}>{sel}</div>
+              </div>
+              <div style={{background:'rgba(255,255,255,.22)',borderRadius:'12px',padding:'10px 16px',textAlign:'center',flexShrink:0}}>
+                <div style={{fontSize:'30px',fontWeight:900,lineHeight:1}}>{selCount}</div>
+                <div style={{fontSize:'10px',opacity:.8,marginTop:'3px'}}>노트 인용</div>
+              </div>
+            </div>
+            <div style={{height:'5px',borderRadius:'3px',background:'rgba(255,255,255,.2)',overflow:'hidden'}}>
+              <div style={{height:'100%',background:'rgba(255,255,255,.75)',width:`${(selCount/maxCount)*100}%`,borderRadius:'3px'}}/>
+            </div>
+          </div>
+
+          {/* 말씀 텍스트 */}
+          <div style={{background:'#fff',borderRadius:'14px',border:'1px solid var(--wb)',padding:'18px 20px'}}>
+            <div style={{fontSize:'11px',fontWeight:800,color:'var(--bm)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'12px'}}>📖 말씀</div>
+            {loading?<div style={{textAlign:'center',padding:'18px',color:'var(--am)',fontSize:'13px'}}>⏳ 말씀 불러오는 중...</div>:<>
+              {koText&&<div style={{marginBottom:enText?'14px':0}}>
+                <div style={{fontSize:'10px',fontWeight:700,color:'#059669',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'6px'}}>🇰🇷 개역개정</div>
+                <div style={{fontSize:'17px',color:'#065f46',lineHeight:2,fontWeight:600}}>{koText}</div>
+              </div>}
+              {enText&&<div style={{borderTop:koText?'1px solid #d1fae5':'none',paddingTop:koText?'14px':0}}>
+                <div style={{fontSize:'10px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'6px'}}>KJV</div>
+                <div style={{fontSize:'13px',color:'#4a2c10',lineHeight:1.9,fontStyle:'italic'}}>{enText}</div>
+              </div>}
+              {!koText&&!enText&&<div style={{textAlign:'center',color:'#9a7a60',fontSize:'13px',padding:'8px'}}>텍스트를 불러올 수 없습니다</div>}
+            </>}
+          </div>
+
+          {/* 연관 키워드 */}
+          {sortedTags.length>0&&<div style={{background:'#fff',borderRadius:'14px',border:'1px solid var(--wb)',padding:'18px 20px'}}>
+            <div style={{fontSize:'11px',fontWeight:800,color:'var(--bm)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'12px'}}>🏷 연관 키워드</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
+              {sortedTags.map(([tag,cnt])=>{const r=cnt/maxTF;return<span key={tag} title={`${cnt}개 노트`} style={{padding:'5px 13px',borderRadius:'20px',fontWeight:700,cursor:'default',fontSize:`${0.7+r*0.35}rem`,background:`rgba(120,53,15,${0.07+r*0.13})`,border:`1px solid rgba(180,83,9,${0.18+r*0.28})`,color:`rgba(120,53,15,${0.55+r*0.45})`}}>#{tag}{cnt>1&&<span style={{opacity:.6,fontSize:'.8em',fontWeight:400}}>×{cnt}</span>}</span>;})}
+            </div>
+          </div>}
+
+          {/* 인용 맥락 */}
+          <div style={{background:'#fff',borderRadius:'14px',border:'1px solid var(--wb)',padding:'18px 20px'}}>
+            <div style={{fontSize:'11px',fontWeight:800,color:'var(--bm)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'12px'}}>📝 인용 맥락 ({selNotes.length}개 노트)</div>
+            <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+              {selNotes.map(n=>{
+                const connRefs=parseScrs(n.mainScripture).filter(s=>s.trim()!==sel&&/\d+:\d+/.test(s));
+                return<div key={n.id} style={{background:'linear-gradient(135deg,#fffbeb,#fff8f0)',borderRadius:'10px',padding:'13px 14px',border:`1px solid ${selCol}33`}}>
+                  <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'8px',marginBottom:'6px'}}>
+                    <div style={{fontWeight:800,fontSize:'14px',color:'#78350f'}}>{n.title}</div>
+                    <div style={{fontSize:'11px',color:'#92400e',background:'#fef3c7',padding:'2px 8px',borderRadius:'20px',flexShrink:0,whiteSpace:'nowrap'}}>{fD(n.date)}</div>
+                  </div>
+                  {n.summary&&<div style={{fontSize:'13px',color:'#5a3a1a',lineHeight:1.75,marginBottom:'8px',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{n.summary}</div>}
+                  {connRefs.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'6px'}}>
+                    {connRefs.slice(0,5).map(s=>{const bk=koBookOf(s);const sc=bk?BIBLE_SECTIONS[bk]:'Other';const c2=SEC_COLORS[sc]||'#888';return<span key={s} style={{fontSize:'11px',background:c2+'18',color:c2,borderRadius:'6px',padding:'2px 8px',border:`1px solid ${c2}33`,fontWeight:600}}>📖 {s}</span>;})}
+                    {connRefs.length>5&&<span style={{fontSize:'11px',color:'#9a7a60'}}>+{connRefs.length-5}</span>}
+                  </div>}
+                  {n.tags?.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'3px'}}>
+                    {n.tags.slice(0,6).map(t=><span key={t} style={{fontSize:'11px',background:'#fff',border:'1px solid #fde68a',color:'#7b3f00',borderRadius:'9999px',padding:'2px 8px'}}>#{t}</span>)}
+                  </div>}
+                </div>;
+              })}
+            </div>
+          </div>
+        </>:<div style={{background:'#fff',borderRadius:'14px',border:'1px solid var(--wb)',padding:'80px 40px',textAlign:'center',color:'#b08060'}}>
+          <div style={{fontSize:'32px',marginBottom:'10px'}}>←</div>
+          <div style={{fontSize:'14px',fontWeight:600}}>왼쪽에서 구절을 선택하세요</div>
+        </div>}
+      </div>
+    </div>
   </div>;
 }
 
@@ -1141,6 +1198,7 @@ function App(){
         <div style={{display:'flex',gap:'7px',alignItems:'center'}}>
           <button onClick={()=>{setChurchInput(dfltChurch);setSettingsOpen(true);}} style={{color:'rgba(255,255,255,.7)',fontSize:'13px',padding:'7px 10px',borderRadius:'8px',background:'rgba(255,255,255,.12)',border:'none',cursor:'pointer'}} title="설정">⚙️</button>
           <button onClick={()=>setView(view==='graph'?'list':'graph')} style={{color:'rgba(255,255,255,.85)',fontSize:'13px',fontWeight:600,padding:'7px 12px',borderRadius:'8px',background:view==='graph'?'rgba(255,255,255,.35)':'rgba(255,255,255,.15)',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>🌐 연결 지도</button>
+          <button onClick={()=>setView(view==='insights'?'list':'insights')} style={{color:'rgba(255,255,255,.85)',fontSize:'13px',fontWeight:600,padding:'7px 12px',borderRadius:'8px',background:view==='insights'?'rgba(255,255,255,.35)':'rgba(255,255,255,.15)',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>📊 인사이트</button>
           {(view==='list'||view==='graph')&&<><button onClick={()=>setExpOpen(true)} style={{color:'rgba(255,255,255,.8)',fontSize:'13px',fontWeight:600,padding:'7px 12px',borderRadius:'8px',background:'rgba(255,255,255,.15)',border:'none',cursor:'pointer'}}>📤 내보내기</button>
           <button onClick={()=>{setEditT(null);setView('editor');}} style={{background:'var(--am)',color:'#fff',fontWeight:700,padding:'8px 15px',borderRadius:'9px',fontSize:'13px',border:'none',cursor:'pointer'}}>+ 새 노트</button></>}
         </div>
@@ -1155,9 +1213,9 @@ function App(){
             {ic:'📚',lb:'전체 노트',v:notes.length,click:null},
             {ic:'📜',lb:'인용 구절',v:notes.reduce((s,n)=>s+(n.verses?.length||0),0),click:'verses'},
             {ic:'🔗',lb:'교차 인용',v:notes.filter(n=>xref(n,notes).length>0).length,click:'xrefs'},
-            {ic:'📊',lb:'자주 인용',v:'TOP',click:'topverses'},
+            {ic:'📊',lb:'자주 인용',v:'TOP',click:'insights'},
           ].map(({ic,lb,v,click})=>(
-            <div key={lb} onClick={click?()=>setStatsModal(click):undefined}
+            <div key={lb} onClick={click?()=>{click==='insights'?setView('insights'):setStatsModal(click);}:undefined}
               style={{background:'#fff',borderRadius:'12px',border:`1px solid ${click?'var(--am)':'var(--wb)'}`,padding:'14px 8px',textAlign:'center',cursor:click?'pointer':'default',transition:'all .2s'}}
               onMouseEnter={click?e=>{e.currentTarget.style.boxShadow='0 4px 16px rgba(200,120,10,.18)';e.currentTarget.style.transform='translateY(-2px)';}:undefined}
               onMouseLeave={click?e=>{e.currentTarget.style.boxShadow='none';e.currentTarget.style.transform='none';}:undefined}>
@@ -1183,6 +1241,7 @@ function App(){
       </div>}
 
       {view==='graph'&&<BibleGraph notes={notes}/>}
+      {view==='insights'&&<InsightsView notes={notes}/>}
       {view==='editor'&&<NoteEditor initial={editT} onSave={saveNote} onCancel={()=>{setView(sel&&editT?'detail':'list');setEditT(null);}} dfltChurch={dfltChurch}/>}
       {view==='detail'&&sel&&<NoteDetail
         note={notes.find(n=>n.id===sel.id)||sel} all={notes}
@@ -1269,38 +1328,6 @@ function App(){
       </div>
     </div>}
 
-    {/* 자주 인용된 구절 TOP 모달 */}
-    {statsModal==='topverses'&&(()=>{
-      const freq={};
-      notes.forEach(n=>{
-        const refs=new Set([
-          ...parseScrs(n.mainScripture).filter(s=>/\d+:\d+/.test(s)).map(s=>s.trim()),
-          ...(n.verses||[]).filter(v=>v.ref&&/\d+:\d+/.test(v.ref)).map(v=>v.ref.trim())
-        ]);
-        refs.forEach(r=>{if(!freq[r])freq[r]={count:0,notes:[]};freq[r].count++;freq[r].notes.push(n);});
-      });
-      const sorted=Object.entries(freq).sort((a,b)=>b[1].count-a[1].count).slice(0,15);
-      const maxCount=sorted[0]?.[1]?.count||1;
-      return<div className="mo" onClick={()=>setStatsModal(null)}>
-        <div className="mb" onClick={e=>e.stopPropagation()}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}}>
-            <div>
-              <h3 style={{fontSize:'17px',fontWeight:800,color:'var(--bd)'}}>📊 자주 인용된 구절 TOP</h3>
-              <div style={{fontSize:'12px',color:'#9a7a60',marginTop:'2px'}}>구절을 클릭하면 말씀·키워드·인용 맥락을 볼 수 있습니다</div>
-            </div>
-            <button onClick={()=>setStatsModal(null)} style={{fontSize:'24px',color:'#9a7a60',background:'none',border:'none',cursor:'pointer',flexShrink:0}}>×</button>
-          </div>
-          {sorted.length===0
-            ?<div style={{textAlign:'center',padding:'40px',color:'#b08060',fontSize:'14px'}}>인용된 구절이 없습니다.</div>
-            :<div style={{display:'flex',flexDirection:'column',gap:'8px',maxHeight:'65vh',overflowY:'auto',paddingRight:'2px'}}>
-              {sorted.map(([ref,{count,notes:ns}],i)=>
-                <TopVerseCard key={ref} rank={i+1} verseRef={ref} count={count} citingNotes={ns} allNotes={notes} maxCount={maxCount}/>
-              )}
-            </div>
-          }
-        </div>
-      </div>;
-    })()}
 
     {expOpen&&<div className="mo" onClick={()=>setExpOpen(false)}>
       <div className="mb" onClick={e=>e.stopPropagation()}>
