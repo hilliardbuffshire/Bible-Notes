@@ -82,6 +82,17 @@ function koBookOf(ref){if(!ref)return null;const t=ref.trim();for(const k of KO)
 const BIBLE_SECTIONS={'창세기':'Torah','출애굽기':'Torah','레위기':'Torah','민수기':'Torah','신명기':'Torah','여호수아':'Historical','사사기':'Historical','룻기':'Historical','사무엘상':'Historical','사무엘하':'Historical','열왕기상':'Historical','열왕기하':'Historical','역대상':'Historical','역대하':'Historical','에스라':'Historical','느헤미야':'Historical','에스더':'Historical','욥기':'Poetry','시편':'Poetry','잠언':'Poetry','전도서':'Poetry','아가':'Poetry','이사야':'MajorProphets','예레미야':'MajorProphets','예레미야애가':'MajorProphets','에스겔':'MajorProphets','다니엘':'MajorProphets','호세아':'MinorProphets','요엘':'MinorProphets','아모스':'MinorProphets','오바댜':'MinorProphets','요나':'MinorProphets','미가':'MinorProphets','나훔':'MinorProphets','하박국':'MinorProphets','스바냐':'MinorProphets','학개':'MinorProphets','스가랴':'MinorProphets','말라기':'MinorProphets','마태복음':'Gospels','마가복음':'Gospels','누가복음':'Gospels','요한복음':'Gospels','사도행전':'Gospels','로마서':'Epistles','고린도전서':'Epistles','고린도후서':'Epistles','갈라디아서':'Epistles','에베소서':'Epistles','빌립보서':'Epistles','골로새서':'Epistles','데살로니가전서':'Epistles','데살로니가후서':'Epistles','디모데전서':'Epistles','디모데후서':'Epistles','디도서':'Epistles','빌레몬서':'Epistles','히브리서':'Epistles','야고보서':'Epistles','베드로전서':'Epistles','베드로후서':'Epistles','요한일서':'Epistles','요한이서':'Epistles','요한삼서':'Epistles','유다서':'Epistles','요한계시록':'Revelation'};
 const SEC_COLORS={'Torah':'#d97706','Historical':'#16a34a','Poetry':'#7c3aed','MajorProphets':'#dc2626','MinorProphets':'#ea580c','Gospels':'#2563eb','Epistles':'#4f46e5','Revelation':'#7f1d1d','Other':'#6b7280'};
 const SEC_LABELS={'Torah':'모세오경','Historical':'역사서','Poetry':'시가서','MajorProphets':'대선지서','MinorProphets':'소선지서','Gospels':'복음서/행전','Epistles':'서신서','Revelation':'요한계시록'};
+const SERVICE_TYPES=[
+  {id:'dawn',label:'평일새벽',icon:'🌅',color:'#0284c7'},
+  {id:'friday',label:'금요철야',icon:'🔥',color:'#7c3aed'},
+  {id:'sunday_main',label:'주일 대예배',icon:'⛪',color:'#b45309'},
+  {id:'sunday_eve',label:'저녁예배',icon:'🌙',color:'#065f46'},
+];
+function svcBadge(serviceType,style={}){
+  const st=SERVICE_TYPES.find(t=>t.id===serviceType);
+  if(!st)return null;
+  return<span style={{display:'inline-flex',alignItems:'center',gap:'3px',background:st.color+'22',color:st.color,fontSize:'11px',fontWeight:700,borderRadius:'9999px',padding:'2px 9px',border:`1px solid ${st.color}55`,...style}}>{st.icon} {st.label}</span>;
+}
 
 function xref(note,all){
   // 교차인용 기준: 반드시 "책명 장:절" 형식이 일치해야 함 (책명만 같은 것은 제외)
@@ -271,6 +282,19 @@ function CrossRefMap({note,all}){
         </div>
       </div>}
 
+      {/* 예배 유형 분포 */}
+      {sel.citing.length>0&&(()=>{
+        const svcCnt={};[...sel.citing,note].forEach(n=>{if(n.serviceType)svcCnt[n.serviceType]=(svcCnt[n.serviceType]||0)+1;});
+        const entries=Object.entries(svcCnt).sort((a,b)=>b[1]-a[1]);
+        if(!entries.length)return null;
+        return<div style={{marginBottom:'14px'}}>
+          <div style={{fontSize:'11px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>⛪ 예배 유형 분포</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:'6px',padding:'10px 12px',background:'#fffbeb',borderRadius:'10px',border:'1px solid #fde68a'}}>
+            {entries.map(([sid,cnt])=>{const st=SERVICE_TYPES.find(t=>t.id===sid);return st?<span key={sid} style={{display:'inline-flex',alignItems:'center',gap:'4px',padding:'4px 11px',borderRadius:'20px',fontSize:'12px',fontWeight:700,background:st.color+'18',border:`1.5px solid ${st.color}55`,color:st.color}}>{st.icon} {st.label}<span style={{background:st.color,color:'#fff',borderRadius:'9999px',padding:'0 5px',fontSize:'10px',fontWeight:800,marginLeft:'2px'}}>{cnt}</span></span>:null;})}
+          </div>
+        </div>;
+      })()}
+
       {/* SVG 연결 지도 */}
       {sel.citing.length>0&&<div style={{marginBottom:'14px'}}>
         <div style={{fontSize:'11px',fontWeight:700,color:'#9a7a60',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:'8px'}}>인용 연결 지도</div>
@@ -286,7 +310,10 @@ function CrossRefMap({note,all}){
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'8px',marginBottom:'3px'}}>
                 <div style={{fontWeight:800,fontSize:'14px',color:'#78350f'}}>{n.title}</div>
-                <div style={{fontSize:'11px',color:'#92400e',background:'#fef3c7',padding:'2px 8px',borderRadius:'20px',flexShrink:0,whiteSpace:'nowrap'}}>{fD(n.date)}</div>
+                <div style={{display:'flex',alignItems:'center',gap:'4px',flexShrink:0}}>
+                  {svcBadge(n.serviceType,{fontSize:'10px',padding:'1px 7px'})}
+                  <span style={{fontSize:'11px',color:'#92400e',background:'#fef3c7',padding:'2px 8px',borderRadius:'20px',whiteSpace:'nowrap'}}>{fD(n.date)}</span>
+                </div>
               </div>
               {n.mainScripture&&<div style={{fontSize:'12px',color:'#92400e',marginBottom:'5px'}}>📖 {parseScrs(n.mainScripture).join(', ')}</div>}
               <div style={{display:'flex',flexWrap:'wrap',gap:'3px'}}>
@@ -765,10 +792,17 @@ function NoteEditor({initial,onSave,onCancel,dfltChurch}){
       {/* 제목 */}
       <div>{L('제목 *')}<input value={form.title} onChange={e=>set('title',e.target.value)} placeholder="설교 제목 또는 성경공부 주제" style={{fontSize:'16px'}}/></div>
 
-      {/* 날짜 + 교회 */}
+      {/* 날짜 + 교회 + 예배 유형 */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
         <div>{L('날짜')}<input type="date" value={form.date} onChange={e=>set('date',e.target.value)}/></div>
         <div>{L('교회','선택')}<input value={form.church} onChange={e=>set('church',e.target.value)} placeholder="교회 이름"/></div>
+      </div>
+      <div>
+        {L('예배 유형','선택')}
+        <div style={{display:'flex',flexWrap:'wrap',gap:'7px',marginTop:'2px'}}>
+          <button type="button" onClick={()=>set('serviceType','')} style={{padding:'6px 13px',borderRadius:'9999px',fontSize:'13px',fontWeight:700,border:`1.5px solid ${!form.serviceType?'var(--bm)':'var(--wb)'}`,background:!form.serviceType?'var(--bm)':'#fff',color:!form.serviceType?'#fff':'#9a7a60',cursor:'pointer'}}>없음</button>
+          {SERVICE_TYPES.map(t=>{const active=form.serviceType===t.id;return<button key={t.id} type="button" onClick={()=>set('serviceType',active?'':t.id)} style={{padding:'6px 13px',borderRadius:'9999px',fontSize:'13px',fontWeight:700,border:`1.5px solid ${active?t.color:'var(--wb)'}`,background:active?t.color+'22':'#fff',color:active?t.color:'#9a7a60',cursor:'pointer'}}>{t.icon} {t.label}</button>;})}
+        </div>
       </div>
 
       {/* 본문 성경구절 — 복수 입력 */}
@@ -879,7 +913,10 @@ function NoteDetail({note,all,onEdit,onClose,onDelete}){
     </div>
     <div className="card" style={{overflow:'hidden'}}>
       <div style={{background:'linear-gradient(135deg,var(--bd),var(--bm))',padding:'22px',color:'#fff'}}>
-        <div style={{fontSize:'13px',opacity:.75,marginBottom:'4px'}}>{fD(note.date)}{note.church&&` · ${note.church}`}</div>
+        <div style={{display:'flex',alignItems:'center',gap:'7px',flexWrap:'wrap',marginBottom:'4px'}}>
+          <span style={{fontSize:'13px',opacity:.75}}>{fD(note.date)}{note.church&&` · ${note.church}`}</span>
+          {svcBadge(note.serviceType,{background:'rgba(255,255,255,.2)',color:'#fff',border:'1px solid rgba(255,255,255,.4)',fontSize:'12px'})}
+        </div>
         <h1 style={{fontSize:'22px',fontWeight:800,marginBottom:'8px'}}>{note.title}</h1>
         {scrs.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:'5px',marginBottom:'6px'}}>
           {scrs.map(s=><span key={s} style={{background:'rgba(255,255,255,.2)',fontSize:'13px',padding:'3px 10px',borderRadius:'7px',color:'#fde68a',fontWeight:600}}>📜 {s}</span>)}
@@ -936,7 +973,10 @@ function NoteCard({note,all,onClick}){
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'8px'}}>
       <div style={{flex:1,minWidth:0}}>
         <h3 style={{fontWeight:800,fontSize:'17px',lineHeight:1.3,marginBottom:'3px',color:'var(--bd)'}}>{note.title}</h3>
-        <div style={{fontSize:'13px',color:'#9a7a60'}}>{fD(note.date)}{note.church&&` · ${note.church}`}</div>
+        <div style={{fontSize:'13px',color:'#9a7a60',display:'flex',alignItems:'center',flexWrap:'wrap',gap:'5px'}}>
+          <span>{fD(note.date)}{note.church&&` · ${note.church}`}</span>
+          {svcBadge(note.serviceType)}
+        </div>
       </div>
       <div style={{display:'flex',gap:'4px',flexShrink:0,marginLeft:'7px',alignItems:'center'}}>
         {vid&&<span style={{fontSize:'15px'}}>▶️</span>}
@@ -977,7 +1017,8 @@ function App(){
   const [q,setQ]=useState('');const [svr,setSvr]=useState(null);const [ld,setLd]=useState(true);
   const [expOpen,setExpOpen]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
-  const [statsModal,setStatsModal]=useState(null); // null | 'verses' | 'xrefs'
+  const [statsModal,setStatsModal]=useState(null); // null | 'verses' | 'xrefs' | 'services' | 'topverses'
+  const [svcFilter,setSvcFilter]=useState('');
   const [dfltChurch,setDfltChurch]=useState('부산제일교회');
   const [churchInput,setChurchInput]=useState('부산제일교회');
 
@@ -1012,6 +1053,7 @@ function App(){
   };
 
   const filtered=notes.filter(n=>{
+    if(svcFilter&&n.serviceType!==svcFilter)return false;
     if(!q.trim())return true;const s=q.toLowerCase();
     return[n.title,n.content,n.mainScripture,n.summary,n.church,...(n.tags||[])].some(x=>x?.toLowerCase().includes(s));
   }).sort((a,b)=>{const da=a.date?new Date(a.date).getTime():0;const db=b.date?new Date(b.date).getTime():0;return db-da;});
@@ -1045,12 +1087,19 @@ function App(){
 
     <main style={{maxWidth:'900px',margin:'0 auto',padding:'18px 14px'}}>
       {view==='list'&&<div className="fade">
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="🔍 제목, 본문구절, 태그, 내용으로 검색..." style={{marginBottom:'16px',fontSize:'15px'}}/>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px',marginBottom:'16px'}}>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="🔍 제목, 본문구절, 태그, 내용으로 검색..." style={{marginBottom:'12px',fontSize:'15px'}}/>
+        {/* 예배 유형 필터 */}
+        <div style={{display:'flex',flexWrap:'wrap',gap:'5px',marginBottom:'14px',alignItems:'center'}}>
+          <button onClick={()=>setSvcFilter('')} style={{padding:'4px 12px',borderRadius:'9999px',fontSize:'12px',fontWeight:700,border:`1.5px solid ${!svcFilter?'var(--bm)':'var(--wb)'}`,background:!svcFilter?'var(--bm)':'#fff',color:!svcFilter?'#fff':'#9a7a60',cursor:'pointer'}}>전체</button>
+          {SERVICE_TYPES.map(t=>{const active=svcFilter===t.id;const cnt=notes.filter(n=>n.serviceType===t.id).length;return<button key={t.id} onClick={()=>setSvcFilter(s=>s===t.id?'':t.id)} style={{padding:'4px 12px',borderRadius:'9999px',fontSize:'12px',fontWeight:700,border:`1.5px solid ${active?t.color:'var(--wb)'}`,background:active?t.color+'22':'#fff',color:active?t.color:'#9a7a60',cursor:'pointer',transition:'all .15s'}}>{t.icon} {t.label}{cnt>0&&<span style={{marginLeft:'4px',opacity:.7}}>({cnt})</span>}</button>;})}
+          <button onClick={()=>setStatsModal('services')} style={{padding:'4px 11px',borderRadius:'9999px',fontSize:'11px',fontWeight:700,border:'1.5px solid var(--wb)',background:'#fff',color:'#9a7a60',cursor:'pointer',marginLeft:'auto'}} title="예배 유형별 통계">📈 통계</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:'10px',marginBottom:'16px'}}>
           {[
             {ic:'📚',lb:'전체 노트',v:notes.length,click:null},
             {ic:'📜',lb:'인용 구절',v:notes.reduce((s,n)=>s+(n.verses?.length||0),0),click:'verses'},
-            {ic:'🔗',lb:'교차 인용',v:notes.filter(n=>xref(n,notes).length>0).length,click:'xrefs'}
+            {ic:'🔗',lb:'교차 인용',v:notes.filter(n=>xref(n,notes).length>0).length,click:'xrefs'},
+            {ic:'📊',lb:'자주 인용',v:'TOP',click:'topverses'},
           ].map(({ic,lb,v,click})=>(
             <div key={lb} onClick={click?()=>setStatsModal(click):undefined}
               style={{background:'#fff',borderRadius:'12px',border:`1px solid ${click?'var(--am)':'var(--wb)'}`,padding:'14px 8px',textAlign:'center',cursor:click?'pointer':'default',transition:'all .2s'}}
@@ -1161,6 +1210,92 @@ function App(){
           })}
           {notes.every(n=>xref(n,notes).length===0)&&<div style={{textAlign:'center',padding:'40px',color:'#b08060',fontSize:'14px'}}>교차 인용된 노트가 없습니다.</div>}
         </div>
+      </div>
+    </div>}
+
+    {/* 자주 인용된 구절 TOP 모달 */}
+    {statsModal==='topverses'&&<div className="mo" onClick={()=>setStatsModal(null)}>
+      <div className="mb" onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
+          <h3 style={{fontSize:'17px',fontWeight:800,color:'var(--bd)'}}>📊 자주 인용된 구절 TOP</h3>
+          <button onClick={()=>setStatsModal(null)} style={{fontSize:'24px',color:'#9a7a60',background:'none',border:'none',cursor:'pointer'}}>×</button>
+        </div>
+        <div style={{fontSize:'12px',color:'#9a7a60',marginBottom:'14px',background:'#fffbeb',borderRadius:'8px',padding:'8px 12px',border:'1px solid #fde68a'}}>
+          💡 여러 노트에서 반복 인용된 구절일수록 설교의 핵심 말씀입니다
+        </div>
+        {(()=>{
+          const freq={};
+          notes.forEach(n=>{
+            const refs=new Set([...parseScrs(n.mainScripture).filter(s=>/\d+:\d+/.test(s)),
+              ...(n.verses||[]).filter(v=>v.ref&&/\d+:\d+/.test(v.ref)).map(v=>v.ref.trim())]);
+            refs.forEach(r=>{if(!freq[r])freq[r]={count:0,notes:[]};freq[r].count++;freq[r].notes.push(n);});
+          });
+          const sorted=Object.entries(freq).sort((a,b)=>b[1].count-a[1].count).slice(0,15);
+          const max=sorted[0]?.[1]?.count||1;
+          if(!sorted.length)return<div style={{textAlign:'center',padding:'40px',color:'#b08060',fontSize:'14px'}}>인용된 구절이 없습니다.</div>;
+          return<div style={{display:'flex',flexDirection:'column',gap:'8px',maxHeight:'60vh',overflowY:'auto'}}>
+            {sorted.map(([ref,{count,notes:ns}],i)=>{
+              const book=koBookOf(ref);const sec=book?BIBLE_SECTIONS[book]:'Other';const col=SEC_COLORS[sec]||'#888';
+              const svcCnts={};ns.forEach(n=>{if(n.serviceType)svcCnts[n.serviceType]=(svcCnts[n.serviceType]||0)+1;});
+              return<div key={ref} style={{display:'flex',gap:'10px',alignItems:'center',background:'#fff',borderRadius:'10px',padding:'11px 14px',border:`1px solid ${col}33`}}>
+                <div style={{width:'26px',height:'26px',borderRadius:'50%',background:i<3?'#78350f':col,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'12px',fontWeight:800,flexShrink:0}}>{i+1}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'6px',marginBottom:'4px'}}>
+                    <span style={{fontWeight:800,color:col,fontSize:'14px'}}>{ref}</span>
+                    <span style={{background:col+'22',color:col,fontSize:'11px',fontWeight:700,borderRadius:'9999px',padding:'1px 8px',border:`1px solid ${col}44`}}>{SEC_LABELS[sec]||sec}</span>
+                  </div>
+                  <div style={{display:'flex',gap:'4px',flexWrap:'wrap',alignItems:'center'}}>
+                    <div style={{width:`${(count/max)*120}px`,height:'6px',borderRadius:'3px',background:`linear-gradient(90deg,${col},${col}88)`,minWidth:'20px'}}/>
+                    <span style={{fontSize:'12px',fontWeight:700,color:'#78350f'}}>{count}개 노트</span>
+                    {Object.entries(svcCnts).map(([sid,cnt])=>{const st=SERVICE_TYPES.find(t=>t.id===sid);return st?<span key={sid} style={{fontSize:'10px',background:st.color+'22',color:st.color,borderRadius:'9999px',padding:'1px 6px',border:`1px solid ${st.color}44`}}>{st.icon}×{cnt}</span>:null;})}
+                  </div>
+                </div>
+              </div>;
+            })}
+          </div>;
+        })()}
+      </div>
+    </div>}
+
+    {/* 예배 유형 통계 모달 */}
+    {statsModal==='services'&&<div className="mo" onClick={()=>setStatsModal(null)}>
+      <div className="mb" style={{maxWidth:'480px'}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'16px'}}>
+          <h3 style={{fontSize:'17px',fontWeight:800,color:'var(--bd)'}}>⛪ 예배 유형별 통계</h3>
+          <button onClick={()=>setStatsModal(null)} style={{fontSize:'24px',color:'#9a7a60',background:'none',border:'none',cursor:'pointer'}}>×</button>
+        </div>
+        {(()=>{
+          const total=notes.length;
+          const rows=SERVICE_TYPES.map(t=>{
+            const ns=notes.filter(n=>n.serviceType===t.id);
+            const books=new Set(ns.flatMap(n=>parseScrs(n.mainScripture).map(s=>koBookOf(s)).filter(Boolean)));
+            const tagFreq=ns.flatMap(n=>n.tags||[]).reduce((a,t)=>({...a,[t]:(a[t]||0)+1}),{});
+            const topTags=Object.entries(tagFreq).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([t])=>t);
+            return{...t,count:ns.length,books:[...books].slice(0,4),topTags};
+          });
+          const uncat=notes.filter(n=>!n.serviceType).length;
+          const maxC=Math.max(...rows.map(r=>r.count),1);
+          return<div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+            {rows.map(r=><div key={r.id} style={{background:'#fff',borderRadius:'12px',padding:'14px',border:`1.5px solid ${r.color}44`}}>
+              <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}}>
+                <span style={{fontSize:'22px'}}>{r.icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:800,fontSize:'14px',color:r.color}}>{r.label}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:'6px',marginTop:'4px'}}>
+                    <div style={{height:'8px',borderRadius:'4px',background:`linear-gradient(90deg,${r.color},${r.color}88)`,width:`${(r.count/maxC)*160}px`,minWidth:r.count?'20px':'0px'}}/>
+                    <span style={{fontSize:'13px',fontWeight:700,color:'#78350f'}}>{r.count}개 노트</span>
+                    <span style={{fontSize:'11px',color:'#9a7a60'}}>{total?Math.round(r.count/total*100):0}%</span>
+                  </div>
+                </div>
+              </div>
+              {r.books.length>0&&<div style={{fontSize:'11px',color:'#9a7a60',marginBottom:'4px'}}>📖 {r.books.join(', ')}{r.books.length===4&&' …'}</div>}
+              {r.topTags.length>0&&<div style={{display:'flex',gap:'4px',flexWrap:'wrap'}}>
+                {r.topTags.map(t=><span key={t} style={{background:r.color+'18',color:r.color,fontSize:'11px',borderRadius:'9999px',padding:'1px 8px',border:`1px solid ${r.color}33`}}>#{t}</span>)}
+              </div>}
+            </div>)}
+            {uncat>0&&<div style={{background:'var(--cr)',borderRadius:'10px',padding:'10px 14px',border:'1px solid var(--wb)',fontSize:'13px',color:'#9a7a60'}}>미분류: {uncat}개 노트</div>}
+          </div>;
+        })()}
       </div>
     </div>}
 
